@@ -1,0 +1,608 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
+import 'package:suraksha_women_safety_app/config/api_config.dart';
+import 'package:suraksha_women_safety_app/config/environment_loader.dart';
+import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
+import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
+import 'package:suraksha_women_safety_app/core/notifications/local_alert_service.dart';
+import 'package:suraksha_women_safety_app/core/notifications/push_notification_service.dart';
+import 'package:suraksha_women_safety_app/features/auth/auth_gate.dart';
+import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
+import 'package:suraksha_women_safety_app/features/profile/emergency_contact_guard.dart';
+import 'package:suraksha_women_safety_app/features/profile/emergency_contacts_provider.dart';
+import 'package:suraksha_women_safety_app/theme/app_theme.dart';
+import 'package:suraksha_women_safety_app/theme/theme_mode_provider.dart';
+import 'package:suraksha_women_safety_app/features/routes/route_safety_provider.dart';
+import 'package:suraksha_women_safety_app/features/dashboard/safety_monitor_provider.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:suraksha_women_safety_app/features/sos/scream_detection_service.dart';
+import 'package:suraksha_women_safety_app/features/sos/sensor_service.dart';
+import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
+import 'package:suraksha_women_safety_app/localization/locale_provider.dart';
+import 'package:suraksha_women_safety_app/widgets/premium_dialog.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
+  await EnvironmentLoader.load();
+  if (!dotenv.isInitialized) {
+    throw StateError('App environment failed to load.');
+  }
+  await BackendUrlResolver.clearOverride();
+  NetworkManager.instance.dio.options.baseUrl = ApiConfig.preferredBaseUrl;
+  // Do not block first frame on network/Firebase — warm up in background.
+  unawaited(NetworkManager.instance.warmUpInBackground());
+  unawaited(PushNotificationService.instance.initialize());
+  unawaited(LocalAlertService.instance.ensureReady());
+  runApp(const ProviderScope(child: MyApp()));
+}
+
+class MyApp extends ConsumerStatefulWidget {
+  final bool startBackgroundServices;
+
+  const MyApp({super.key, this.startBackgroundServices = true});
+
+  @override
+  ConsumerState<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends ConsumerState<MyApp> {
+  late final _AppLifecycleHandler _lifecycleHandler;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _impactDialogVisible = false;
+  bool _distressDialogVisible = false;
+  bool _routeGuardDialogVisible = false;
+  bool _missingContactsDialogVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycleHandler = _AppLifecycleHandler(
+      ref,
+      onResumed: _checkMissingEmergencyContactsReminder,
+    );
+    WidgetsBinding.instance.addObserver(_lifecycleHandler);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _syncSafetySummaryLanguage(ref.read(appLocaleProvider));
+      final auth = ref.read(authProvider);
+      if (auth.token != null && auth.token!.isNotEmpty) {
+        unawaited(
+          PushNotificationService.instance.registerTokenIfAuthenticated(),
+        );
+      }
+      unawaited(_checkMissingEmergencyContactsReminder());
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(_lifecycleHandler);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<Locale>(appLocaleProvider, (previous, next) {
+      _syncSafetySummaryLanguage(next);
+    });
+
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      if (next.token != null && next.token!.isNotEmpty) {
+        unawaited(
+          PushNotificationService.instance.registerTokenIfAuthenticated(),
+        );
+      }
+      final wasAuthenticated = previous?.isAuthenticated ?? false;
+      if (!wasAuthenticated && next.isAuthenticated) {
+        unawaited(ref.read(emergencyContactsProvider.notifier).loadContacts());
+        _startBackgroundServicesIfNeeded();
+      }
+      if (wasAuthenticated && !next.isAuthenticated) {
+        unawaited(ref.read(safetyMonitorProvider.notifier).stop().catchError((_) {}));
+      }
+    });
+
+    ref.listen<List<EmergencyContact>>(emergencyContactsProvider, (
+      previous,
+      next,
+    ) {
+      if (previous == null) return;
+      if (previous.isNotEmpty && next.isEmpty) {
+        unawaited(_checkMissingEmergencyContactsReminder());
+      }
+    });
+
+    if (widget.startBackgroundServices) {
+      ref.listen<ImpactDetectionState>(impactDetectionProvider, (
+        previous,
+        next,
+      ) {
+        final wasActive = previous?.countdownActive ?? false;
+        if (next.countdownActive && !_impactDialogVisible) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showImpactCountdownDialog();
+          });
+        } else if (wasActive && !next.countdownActive && _impactDialogVisible) {
+          _dismissImpactCountdownDialog();
+        }
+      });
+
+      ref.listen<ScreamDetectionState>(screamDetectionProvider, (
+        previous,
+        next,
+      ) {
+        final wasActive = previous?.countdownActive ?? false;
+        if (next.countdownActive && !_distressDialogVisible) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showDistressCountdownDialog();
+          });
+        } else if (wasActive &&
+            !next.countdownActive &&
+            _distressDialogVisible) {
+          _dismissDistressCountdownDialog();
+        }
+      });
+
+      ref.listen<RouteSafetyState>(routeSafetyProvider, (previous, next) {
+        final wasPending = previous?.pendingSafetyCheck ?? false;
+        if (next.pendingSafetyCheck &&
+            !wasPending &&
+            !_routeGuardDialogVisible) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showRouteGuardCheckDialog();
+          });
+        } else if (wasPending &&
+            !next.pendingSafetyCheck &&
+            _routeGuardDialogVisible) {
+          _dismissRouteGuardCheckDialog();
+        }
+      });
+    }
+
+    final appThemeMode = ref.watch(appThemeModeProvider);
+    final appLocale = ref.watch(appLocaleProvider);
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: _systemUiOverlayStyle(appThemeMode),
+      child: MaterialApp(
+        navigatorKey: _navigatorKey,
+        title: 'Suraksha',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: appThemeMode,
+        locale: appLocale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: const AuthGate(),
+      ),
+    );
+  }
+
+  SystemUiOverlayStyle _systemUiOverlayStyle(ThemeMode mode) {
+    final isLight = mode == ThemeMode.light;
+    return SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isLight ? Brightness.dark : Brightness.light,
+      statusBarBrightness: isLight ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: isLight
+          ? const Color(0xFFF6F8FC)
+          : Colors.black,
+      systemNavigationBarIconBrightness: isLight
+          ? Brightness.dark
+          : Brightness.light,
+      systemNavigationBarDividerColor: Colors.transparent,
+    );
+  }
+//Demo
+  void _startBackgroundServicesIfNeeded() {
+    if (!widget.startBackgroundServices) return;
+    Future<void>.delayed(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      final auth = ref.read(authProvider);
+      if (!auth.isAuthenticated) return;
+      unawaited(
+        ref.read(safetyMonitorProvider.notifier).start().catchError((_) {}),
+      );
+      unawaited(
+        ref.read(routeSafetyProvider.notifier).start().catchError((_) {}),
+      );
+    });
+  }
+
+  void _syncSafetySummaryLanguage(Locale locale) {
+    ref
+        .read(safetyMonitorProvider.notifier)
+        .setSummaryLanguage(locale.languageCode);
+  }
+
+  Future<void> _checkMissingEmergencyContactsReminder() async {
+    if (!mounted) return;
+
+    final hasContacts = await hasSavedEmergencyContacts(ref);
+    if (!mounted || hasContacts) return;
+
+    _presentMissingEmergencyContactsReminder();
+  }
+
+  void _presentMissingEmergencyContactsReminder() {
+    if (!mounted || _missingContactsDialogVisible) return;
+
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null) return;
+
+    _missingContactsDialogVisible = true;
+    showMissingEmergencyContactsDialog(dialogContext).whenComplete(() {
+      _missingContactsDialogVisible = false;
+    });
+  }
+
+  Future<void> _showImpactCountdownDialog() async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || _impactDialogVisible) return;
+
+    _impactDialogVisible = true;
+    await showDialog<void>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (context) => Consumer(
+        builder: (context, ref, _) {
+          final state = ref.watch(impactDetectionProvider);
+          final l10n = AppLocalizations.of(context);
+          return PremiumDialogSurface(
+            title: l10n.t('impactDetected'),
+            message: l10n.t('impactDetectedMessage'),
+            icon: Icons.warning_amber_rounded,
+            accentColor: const Color(0xFFE53935),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  ref
+                      .read(impactDetectionProvider.notifier)
+                      .cancelPendingImpact();
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor:
+                      Theme.of(context).brightness == Brightness.light
+                      ? const Color(0xFF172235)
+                      : Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+                child: Text(l10n.t('cancelSos')),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  unawaited(
+                    ref
+                        .read(impactDetectionProvider.notifier)
+                        .confirmPendingImpact(),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 239, 179, 178),
+                  foregroundColor: const Color.fromARGB(255, 232, 49, 49),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: Text(l10n.t('sendSosNow')),
+              ),
+            ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n
+                      .t('sosWillBeSentIn')
+                      .replaceAll('{seconds}', '${state.countdownSeconds}'),
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? const Color(0xFF23324A)
+                        : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  state.lastImpactPosition == null
+                      ? l10n.t('savingLastKnownLocation')
+                      : l10n.t('lastLocationSavedForHelp'),
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? const Color(0xFF516078)
+                        : Colors.white.withValues(alpha: 0.78),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    _impactDialogVisible = false;
+  }
+
+  void _dismissImpactCountdownDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.canPop()) {
+      _impactDialogVisible = false;
+      return;
+    }
+
+    navigator.pop();
+    _impactDialogVisible = false;
+  }
+
+  Future<void> _showDistressCountdownDialog() async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || _distressDialogVisible) return;
+
+    _distressDialogVisible = true;
+    await showDialog<void>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (context) => Consumer(
+        builder: (context, ref, _) {
+          final state = ref.watch(screamDetectionProvider);
+          final triggerLabel =
+              state.lastTriggerType == DistressTriggerType.phrase
+              ? 'Distress phrase detected'
+              : 'Scream or loud distress sound detected';
+          final l10n = AppLocalizations.of(context);
+          return PremiumDialogSurface(
+            title: triggerLabel == 'Scream or loud distress sound detected'
+                ? l10n.t('screamDetected')
+                : triggerLabel,
+            message: l10n.t('sosCountdownActiveMessage'),
+            icon: Icons.record_voice_over_rounded,
+            accentColor: const Color(0xFFE53935),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  ref
+                      .read(screamDetectionProvider.notifier)
+                      .cancelPendingDistress();
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor:
+                      Theme.of(context).brightness == Brightness.light
+                      ? const Color(0xFF172235)
+                      : Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+                child: Text(l10n.t('cancelSos')),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  unawaited(
+                    ref
+                        .read(screamDetectionProvider.notifier)
+                        .confirmPendingDistress(),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 239, 179, 178),
+                  foregroundColor: const Color.fromARGB(255, 232, 49, 49),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: Text(l10n.t('sendSosNow')),
+              ),
+            ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n
+                      .t('sosWillBeSentIn')
+                      .replaceAll(
+                        '{seconds}',
+                        '${state.countdownSeconds}',
+                      ),
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? const Color(0xFF23324A)
+                        : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (state.lastDetectedPhrase != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Matched: ${state.lastDetectedPhrase}',
+                    style: TextStyle(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? const Color(0xFF516078)
+                          : Colors.white.withValues(alpha: 0.78),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (state.lastScreamScore != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Scream confidence: ${(state.lastScreamScore! * 100).round()}%',
+                    style: TextStyle(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? const Color(0xFF516078)
+                          : Colors.white.withValues(alpha: 0.78),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    _distressDialogVisible = false;
+  }
+
+  void _dismissDistressCountdownDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.canPop()) {
+      _distressDialogVisible = false;
+      return;
+    }
+
+    navigator.pop();
+    _distressDialogVisible = false;
+  }
+
+  Future<void> _showRouteGuardCheckDialog() async {
+    final dialogContext = _navigatorKey.currentContext;
+    if (dialogContext == null || _routeGuardDialogVisible) return;
+
+    _routeGuardDialogVisible = true;
+    await showDialog<void>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (context) => Consumer(
+        builder: (context, ref, _) {
+          final state = ref.watch(routeSafetyProvider);
+          final l10n = AppLocalizations.of(context);
+          return PremiumDialogSurface(
+            title: l10n.t('routeGuardDialogTitle'),
+            message: l10n.t('routeGuardDialogMessage'),
+            icon: Icons.alt_route_rounded,
+            accentColor: const Color(0xFFE53935),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  ref.read(routeSafetyProvider.notifier).markUserSafe();
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor:
+                      Theme.of(context).brightness == Brightness.light
+                      ? const Color(0xFF172235)
+                      : Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
+                child: Text(l10n.t('imSafe')),
+              ),
+            ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n
+                      .t('routeGuardConfirmWithin')
+                      .replaceAll('{seconds}', '${state.countdownSeconds}'),
+                  style: TextStyle(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? const Color(0xFF23324A)
+                        : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (state.deviationMeters != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    l10n
+                        .t('routeGuardDeviationMeters')
+                        .replaceAll(
+                          '{meters}',
+                          '${state.deviationMeters!.round()}',
+                        ),
+                    style: TextStyle(
+                      color: Theme.of(context).brightness == Brightness.light
+                          ? const Color(0xFF516078)
+                          : Colors.white.withValues(alpha: 0.78),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    _routeGuardDialogVisible = false;
+  }
+
+  void _dismissRouteGuardCheckDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.canPop()) {
+      _routeGuardDialogVisible = false;
+      return;
+    }
+
+    navigator.pop();
+    _routeGuardDialogVisible = false;
+  }
+}
+
+class _AppLifecycleHandler extends WidgetsBindingObserver {
+  final WidgetRef ref;
+  final Future<void> Function() onResumed;
+
+  _AppLifecycleHandler(this.ref, {required this.onResumed});
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(
+        ref.read(safetyMonitorProvider.notifier).start().catchError((_) {}),
+      );
+      unawaited(
+        ref
+            .read(impactDetectionProvider.notifier)
+            .resumeIfEnabled()
+            .catchError((_) {}),
+      );
+      unawaited(onResumed());
+      unawaited(
+        ref
+            .read(screamDetectionProvider.notifier)
+            .resumeIfEnabled()
+            .catchError((_) {}),
+      );
+      unawaited(
+        ref
+            .read(routeSafetyProvider.notifier)
+            .resumeIfEnabled()
+            .catchError((_) {}),
+      );
+    }
+  }
+}

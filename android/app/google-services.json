@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "956185808209",
+    "project_id": "surakhsha-b06d1",
+    "storage_bucket": "surakhsha-b06d1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:956185808209:android:d79dc4b61ef2fc3d0d1770",
+        "android_client_info": {
+          "package_name": "com.example.suraksha_women_safety_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBPcMjN8sJ747uIHs6FQoIxEElFpNNv9iU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

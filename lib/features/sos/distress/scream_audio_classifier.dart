@@ -15,20 +15,29 @@ class ScreamAudioClassifier {
   static ScreamAudioClassifier get instance =>
       _instance ??= ScreamAudioClassifier._();
 
-  double _bias = -0.35;
+  double _bias = -0.42;
   final Map<String, double> _weights = {
-    'rms': 2.4,
-    'peakRatio': 1.8,
-    'highBandEnergy': 2.1,
-    'zcr': 0.6,
-    'sustainedMs': 0.0012,
-    'pitchScore': 1.4,
+    'rms': 2.1,
+    'peakRatio': 1.4,
+    'highBandEnergy': 2.4,
+    'zcr': 1.1,
+    'sustainedMs': 0.0014,
+    'pitchScore': 1.8,
   };
   final Map<DistressSensitivity, double> _thresholds = {
-    DistressSensitivity.low: 0.62,
-    DistressSensitivity.medium: 0.54,
-    DistressSensitivity.high: 0.46,
+    DistressSensitivity.low: 0.64,
+    DistressSensitivity.medium: 0.56,
+    DistressSensitivity.high: 0.48,
   };
+  final Map<DistressSensitivity, int> _minSustainedMs = {
+    DistressSensitivity.low: 550,
+    DistressSensitivity.medium: 480,
+    DistressSensitivity.high: 400,
+  };
+  double _minHighBand = 0.22;
+  double _minPitchScore = 0.14;
+  double _minZcr = 0.028;
+  double _maxFlatPeakRatio = 0.92;
 
   bool _loaded = false;
   int _sampleRate = 16000;
@@ -58,6 +67,25 @@ class ScreamAudioClassifier {
           _thresholds[key] = (entry.value as num).toDouble();
         }
       }
+      final guards = json['guards'] as Map<String, dynamic>? ?? {};
+      _minHighBand = (guards['minHighBand'] as num?)?.toDouble() ?? _minHighBand;
+      _minPitchScore =
+          (guards['minPitchScore'] as num?)?.toDouble() ?? _minPitchScore;
+      _minZcr = (guards['minZcr'] as num?)?.toDouble() ?? _minZcr;
+      _maxFlatPeakRatio =
+          (guards['maxFlatPeakRatio'] as num?)?.toDouble() ?? _maxFlatPeakRatio;
+      final sustained = json['minSustainedMs'] as Map<String, dynamic>? ?? {};
+      for (final entry in sustained.entries) {
+        final key = switch (entry.key) {
+          'low' => DistressSensitivity.low,
+          'medium' => DistressSensitivity.medium,
+          'high' => DistressSensitivity.high,
+          _ => null,
+        };
+        if (key != null) {
+          _minSustainedMs[key] = (entry.value as num).round();
+        }
+      }
     } catch (_) {}
     _loaded = true;
   }
@@ -73,8 +101,10 @@ class ScreamAudioClassifier {
     Uint8List pcmBytes, {
     required int sampleRate,
     required DistressSensitivity sensitivity,
-    int minSustainedMs = 450,
+    int? minSustainedMs,
   }) {
+    final sustainedThreshold =
+        minSustainedMs ?? _minSustainedMs[sensitivity] ?? 480;
     _sampleRate = sampleRate;
     final samples = _pcm16ToFloat(pcmBytes);
     if (samples.isEmpty) {
@@ -108,9 +138,15 @@ class ScreamAudioClassifier {
         _weights['pitchScore']! * pitchScore;
 
     final score = _sigmoid(logit);
-    final threshold = _thresholds[sensitivity] ?? 0.54;
-    final sustained = _sustainedLoudMs >= minSustainedMs;
-    final isScream = sustained && score >= threshold;
+    final threshold = _thresholds[sensitivity] ?? 0.56;
+    final sustained = _sustainedLoudMs >= sustainedThreshold;
+    final screamLike = highBand >= _minHighBand &&
+        pitchScore >= _minPitchScore &&
+        zcr >= _minZcr;
+    // Steady compressed audio (music/TV) tends to have very flat peaks.
+    final notFlatMusic = peakRatio < _maxFlatPeakRatio || zcr > _minZcr * 1.6;
+    final isScream =
+        sustained && score >= threshold && screamLike && notFlatMusic;
 
     return ScreamAnalysisResult(
       score: score,

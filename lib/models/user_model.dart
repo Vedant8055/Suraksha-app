@@ -26,7 +26,7 @@ class UserModel {
       profilePhoto: _sanitizeRemotePhoto(
         json['profilePhoto'] ?? json['profilePhotoUrl'],
       ),
-      bloodGroup: json['bloodGroup'],
+      bloodGroup: json['bloodGroup']?.toString(),
     );
   }
 

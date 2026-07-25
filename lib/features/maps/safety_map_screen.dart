@@ -1,7 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:ui';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -10,15 +9,24 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
-import 'package:suraksha_women_safety_app/config/app_environment.dart';
 import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
+import 'package:suraksha_women_safety_app/core/location/location_permission_service.dart';
 import 'package:suraksha_women_safety_app/features/dashboard/safety_monitor_provider.dart';
 import 'package:suraksha_women_safety_app/features/maps/map_handoff_actions.dart';
+import 'package:suraksha_women_safety_app/features/maps/map_route_models.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/journey_alert_banner.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/journey_panel.dart';
 import 'package:suraksha_women_safety_app/features/maps/widgets/live_safety_controls_sheet.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/map_locating_view.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/map_offline_banner.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/map_places_list_panel.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/map_quick_controls.dart';
+import 'package:suraksha_women_safety_app/features/maps/widgets/map_top_search_bar.dart';
 import 'package:suraksha_women_safety_app/features/routes/route_safety_provider.dart';
 import 'package:suraksha_women_safety_app/features/toilets/nearby_clean_toilets_service.dart';
 import 'package:suraksha_women_safety_app/features/toilets/nearby_clean_toilets_screen.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/theme/app_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -47,7 +55,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   final Set<Marker> _publicToiletMarkers = {};
   final Set<Circle> _circles = {};
   final Set<Polyline> _polylines = {};
-  final List<_PlaceSuggestion> _suggestions = [];
+  final List<MapPlaceSuggestion> _suggestions = [];
   final List<NearbyCleanToilet> _publicToilets = [];
 
   GoogleMapController? _mapController;
@@ -64,6 +72,8 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   bool _publicToiletsEnabled = false;
   bool _publicToiletsLoading = false;
   bool _publicToiletsFetchSucceeded = false;
+  bool _isOffline = false;
+  bool _showPlacesList = false;
   MapType _mapType = MapType.normal;
   bool _isLoading = true;
   String? _statusText;
@@ -81,6 +91,8 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   int? _stableEtaSeconds;
   DateTime? _lastEtaUpdateAt;
   int _routeRequestId = 0;
+  List<SafetyHeatmapTile>? _cachedHeatmapTilesRef;
+  Set<Circle>? _cachedHeatmapCircles;
 
   @override
   void initState() {
@@ -101,44 +113,41 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   Future<void> _initializeMap() async {
     setState(() {
       _isLoading = true;
-      _statusText = 'Initializing map services...';
+      _statusText = l10nSync('mapInitializingServices');
+      _isOffline = false;
     });
 
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
+    // Prefer monitor position; never re-prompt â€” dashboard owns permission UX.
+    final monitor = ref.read(safetyMonitorProvider);
+    final access = await LocationPermissionService.ensureAccess(
+      mayRequest: false,
+    );
+
+    if (!access.gpsEnabled && monitor.position == null) {
       setState(() {
         _isLoading = false;
-        _statusText = 'Location service is disabled.';
+        _statusText = l10nSync('mapLocationServiceDisabled');
       });
       return;
     }
 
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
+    if (!access.isGranted && monitor.position == null) {
       setState(() {
         _isLoading = false;
-        _statusText = 'Location permission denied.';
+        _statusText = l10nSync('mapLocationPermissionDenied');
       });
       return;
     }
 
-    setState(() => _locationPermissionGranted = true);
+    setState(() => _locationPermissionGranted = access.isGranted);
 
     try {
-      Position? current;
-      try {
-        current = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.best,
-          timeLimit: const Duration(seconds: 10),
-        );
-      } catch (_) {
-        current = await Geolocator.getLastKnownPosition();
-      }
+      Position? current = await LocationPermissionService.resolvePosition(
+        mayRequest: false,
+        preferred: monitor.position,
+        accuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 10),
+      );
 
       if (current == null) {
         setState(() {
@@ -159,7 +168,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       });
 
       _setOrUpdateSelfMarker(current);
-      _startLiveLocationStream();
+      if (access.isGranted) {
+        _startLiveLocationStream();
+      }
       _applyInitialTargetIfAny();
       unawaited(_fetchNearby(current.latitude, current.longitude));
       if (_publicToiletsEnabled) {
@@ -249,9 +260,13 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
             accuracy: LocationAccuracy.bestForNavigation,
             distanceFilter: 5,
             intervalDuration: const Duration(seconds: 2),
-            foregroundNotificationConfig: const ForegroundNotificationConfig(
-              notificationTitle: 'Suraksha Live Location',
-              notificationText: 'Tracking live location for safety features.',
+            foregroundNotificationConfig: ForegroundNotificationConfig(
+              notificationTitle: l10nSync(
+                'surakshaLiveLocationNotificationTitle',
+              ),
+              notificationText: l10nSync(
+                'surakshaLiveLocationNotificationText',
+              ),
               enableWakeLock: true,
             ),
           )
@@ -265,14 +280,42 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
           (pos) {
             if (!mounted) return;
 
-            setState(() {
+            final previous = _position;
+            final distanceMoved = previous == null
+                ? null
+                : Geolocator.distanceBetween(
+                    previous.latitude,
+                    previous.longitude,
+                    pos.latitude,
+                    pos.longitude,
+                  );
+            final accuracyDelta = previous == null
+                ? null
+                : (pos.accuracy - previous.accuracy).abs();
+            final positionChangedMeaningfully = previous == null ||
+                (distanceMoved != null && distanceMoved >= 4) ||
+                (accuracyDelta != null && accuracyDelta > 15);
+
+            final newStatusText = _journeyActive
+                ? AppLocalizations.of(context).t('journeyTrackingActive')
+                : AppLocalizations.of(context).t('liveTrackingActive');
+            final statusWouldChange = _statusText != newStatusText;
+
+            // Only rebuild when the position moved meaningfully, the status
+            // text would change, or a journey is actively being tracked
+            // (journey progress/ETA must keep updating live).
+            if (positionChangedMeaningfully ||
+                statusWouldChange ||
+                _journeyActive) {
+              setState(() {
+                _position = pos;
+                _setOrUpdateSelfMarker(pos);
+                if (_journeyActive) _updateJourneyProgress(pos);
+                _statusText = newStatusText;
+              });
+            } else {
               _position = pos;
-              _setOrUpdateSelfMarker(pos);
-              _updateJourneyProgress(pos);
-              _statusText = _journeyActive
-                  ? AppLocalizations.of(context).t('journeyTrackingActive')
-                  : AppLocalizations.of(context).t('liveTrackingActive');
-            });
+            }
 
             if (_followMe && _mapController != null) {
               _mapController!.animateCamera(
@@ -314,7 +357,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     if (!launched && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(AppLocalizations.of(context).t('couldNotOpenGoogleMaps')),
+          content: Text(
+            AppLocalizations.of(context).t('couldNotOpenGoogleMaps'),
+          ),
         ),
       );
     }
@@ -422,7 +467,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     if (directRemaining <= 35) {
       _journeyActive = false;
       _stableEtaSeconds = 0;
-      _statusText = 'Destination reached';
+      _statusText = l10nSync('destinationReached');
     }
   }
 
@@ -528,8 +573,8 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
           lng: lng,
           markerPrefix: 'police',
           markerHue: BitmapDescriptor.hueBlue,
-          fallbackTitle: 'Police Station',
-          serviceLabel: 'Police stations',
+          fallbackTitle: l10nSync('mapPoliceStationFallback'),
+          serviceLabel: l10nSync('mapPoliceStationsLabel'),
         ),
         _fetchNearbyMarkers(
           endpoint: ApiConstants.nearbyHospitals,
@@ -537,8 +582,8 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
           lng: lng,
           markerPrefix: 'hospital',
           markerHue: BitmapDescriptor.hueRed,
-          fallbackTitle: 'Hospital',
-          serviceLabel: 'Hospitals',
+          fallbackTitle: l10nSync('mapHospitalsLabel'),
+          serviceLabel: l10nSync('mapHospitalsLabel'),
         ),
       ]);
 
@@ -551,6 +596,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       }
 
       setState(() {
+        _isOffline = false;
         _markers.removeWhere(
           (m) =>
               m.markerId.value.startsWith('police_') ||
@@ -566,22 +612,31 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
             _statusText = AppLocalizations.of(context).t('liveTrackingActive');
           }
         } else if (markers.isNotEmpty) {
-          _statusText =
-              'Nearby services loaded with partial issues: ${errors.join(' • ')}';
+          _statusText = l10nSync(
+            'mapNearbyServicesPartialIssues',
+            params: {'errors': errors.join(' â€¢ ')},
+          );
         } else {
-          _statusText = errors.join(' • ');
+          _statusText = errors.join(' â€¢ ');
         }
       });
-    } on DioException {
+    } on DioException catch (error) {
       if (!mounted) return;
-      setState(
-        () => _statusText =
-            'Nearby services could not be loaded. Please try again.',
-      );
+      final offline =
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError;
+      setState(() {
+        _isOffline = offline;
+        _statusText = offline
+            ? AppLocalizations.of(context).t('mapOfflineBannerTitle')
+            : l10nSync('mapNearbyServicesLoadFailed');
+      });
     }
   }
 
-  Future<_NearbyFetchResult> _fetchNearbyMarkers({
+  Future<MapNearbyFetchResult> _fetchNearbyMarkers({
     required String endpoint,
     required double lat,
     required double lng,
@@ -598,7 +653,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
 
       final data = response.data;
       if (data is! List) {
-        return _NearbyFetchResult(
+        return MapNearbyFetchResult(
           errorMessage:
               '$serviceLabel returned an unexpected response from the server.',
         );
@@ -618,7 +673,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
             Marker(
               markerId: MarkerId('${markerPrefix}_$id'),
               position: LatLng(itemLat, itemLng),
-              infoWindow: InfoWindow(title: name),
+              infoWindow: InfoWindow(title: name, snippet: serviceLabel),
               icon: BitmapDescriptor.defaultMarkerWithHue(markerHue),
               onTap: () => unawaited(
                 _presentNearbyLocationChooser(LatLng(itemLat, itemLng), name),
@@ -628,9 +683,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
         }
       }
 
-      return _NearbyFetchResult(markers: markers);
+      return MapNearbyFetchResult(markers: markers);
     } on DioException catch (error) {
-      return _NearbyFetchResult(
+      return MapNearbyFetchResult(
         errorMessage: _describeNearbyFetchError(
           serviceLabel: serviceLabel,
           error: error,
@@ -711,23 +766,20 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   }
 
   Future<void> _fetchPlaceSuggestions(String input) async {
-    final apiKey = AppEnvironment.googleMapsApiKey;
-    if (apiKey.isEmpty) return;
-
     setState(() => _isLoadingSuggestions = true);
     try {
       final response = await _dio.get(
-        'https://maps.googleapis.com/maps/api/place/autocomplete/json',
+        ApiConstants.nearbyAutocomplete,
         queryParameters: {
           'input': input,
-          'key': apiKey,
-          'components': 'country:in',
+          if (_position != null) 'lat': _position!.latitude,
+          if (_position != null) 'lng': _position!.longitude,
         },
       );
 
       final data = response.data;
       final predictions = data is Map<String, dynamic>
-          ? data['predictions']
+          ? data['suggestions']
           : null;
       if (predictions is! List) {
         if (!mounted) return;
@@ -739,21 +791,16 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       }
 
       final parsed = predictions
-          .whereType<Map<String, dynamic>>()
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
           .map(
-            (item) => _PlaceSuggestion(
-              placeId: item['place_id']?.toString() ?? '',
-              title:
-                  item['structured_formatting']?['main_text']?.toString() ??
-                  item['description']?.toString() ??
-                  '',
-              subtitle:
-                  item['structured_formatting']?['secondary_text']
-                      ?.toString() ??
-                  '',
+            (item) => MapPlaceSuggestion(
+              placeId: item['placeId']?.toString() ?? '',
+              title: item['title']?.toString() ?? '',
+              subtitle: item['subtitle']?.toString() ?? '',
             ),
           )
-          .where((s) => s.placeId.isNotEmpty && s.title.isNotEmpty)
+          .where((item) => item.placeId.isNotEmpty && item.title.isNotEmpty)
           .take(6)
           .toList();
 
@@ -773,35 +820,18 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     }
   }
 
-  Future<void> _selectSuggestion(_PlaceSuggestion suggestion) async {
-    final apiKey = AppEnvironment.googleMapsApiKey;
-    if (apiKey.isEmpty) return;
-
+  Future<void> _selectSuggestion(MapPlaceSuggestion suggestion) async {
     try {
       final response = await _dio.get(
-        'https://maps.googleapis.com/maps/api/place/details/json',
-        queryParameters: {
-          'place_id': suggestion.placeId,
-          'fields': 'geometry/location,name',
-          'key': apiKey,
-        },
+        ApiConstants.nearbyPlaceDetails,
+        queryParameters: {'placeId': suggestion.placeId},
       );
 
       final result = response.data is Map<String, dynamic>
-          ? response.data['result']
+          ? response.data as Map<String, dynamic>
           : null;
-      final geometry = result is Map<String, dynamic>
-          ? result['geometry']
-          : null;
-      final location = geometry is Map<String, dynamic>
-          ? geometry['location']
-          : null;
-      final lat = location is Map<String, dynamic>
-          ? (location['lat'] as num?)?.toDouble()
-          : null;
-      final lng = location is Map<String, dynamic>
-          ? (location['lng'] as num?)?.toDouble()
-          : null;
+      final lat = (result?['lat'] as num?)?.toDouble();
+      final lng = (result?['lng'] as num?)?.toDouble();
       if (lat == null || lng == null) {
         await _searchLocation();
         return;
@@ -829,7 +859,6 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
 
   Future<void> _buildRouteTo(LatLng target) async {
     if (_position == null) return;
-    final apiKey = AppEnvironment.googleMapsApiKey;
     final me = LatLng(_position!.latitude, _position!.longitude);
     final requestId = ++_routeRequestId;
 
@@ -852,44 +881,18 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
             patterns: [PatternItem.dash(22), PatternItem.gap(10)],
           ),
         );
-      _statusText = 'Loading best route...';
+      _statusText = l10nSync('mapLoadingBestRoute');
     });
-
-    if (apiKey.isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _polylines
-          ..clear()
-          ..add(
-            Polyline(
-              polylineId: const PolylineId('quick_route'),
-              color: const Color(0xFF4A148C),
-              width: 8,
-              points: [me, target],
-            ),
-          );
-        _statusText = 'Road routing unavailable (missing Maps API key).';
-      });
-      _publishMapRouteToGuard(
-        routePoints: [me, target],
-        destinationName: _selectedDestinationName ?? 'selected destination',
-        safetyScore: 50,
-        safetyReason: 'Direct fallback route without Google routing',
-      );
-      return;
-    }
 
     try {
       final response = await _dio.get(
-        'https://maps.googleapis.com/maps/api/directions/json',
+        ApiConstants.nearbyDirections,
         queryParameters: {
-          'origin': '${me.latitude},${me.longitude}',
-          'destination': '${target.latitude},${target.longitude}',
-          'mode': 'driving',
-          'alternatives': 'true',
-          'departure_time': 'now',
-          'traffic_model': 'best_guess',
-          'key': apiKey,
+          'originLat': me.latitude,
+          'originLng': me.longitude,
+          'destinationLat': target.latitude,
+          'destinationLng': target.longitude,
+          'alternatives': true,
         },
       );
 
@@ -899,39 +902,19 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
         throw StateError('No routes found');
       }
 
-      final parsedRoutes = <_DirectionRoute>[];
+      final parsedRoutes = <MapDirectionRoute>[];
       var routeCounter = 0;
-      for (final routeItem in routes.whereType<Map<String, dynamic>>()) {
-        final overview = routeItem['overview_polyline'];
-        final points = overview is Map<String, dynamic>
-            ? overview['points']?.toString()
-            : null;
-        if (points == null || points.isEmpty) continue;
-
-        final legs = routeItem['legs'];
-        if (legs is! List || legs.isEmpty) continue;
-        final firstLeg = legs.first;
-        if (firstLeg is! Map<String, dynamic>) continue;
+      for (final routeItem in routes.whereType<Map>()) {
+        final item = Map<String, dynamic>.from(routeItem);
+        final points = item['encodedPolyline']?.toString() ?? '';
+        if (points.isEmpty) continue;
 
         final durationInTrafficValue =
-            (firstLeg['duration_in_traffic'] is Map<String, dynamic>)
-            ? (firstLeg['duration_in_traffic']['value'] as num?)?.toInt()
-            : null;
-        final durationValue = (firstLeg['duration'] is Map<String, dynamic>)
-            ? (firstLeg['duration']['value'] as num?)?.toInt()
-            : null;
-        final distanceText = (firstLeg['distance'] is Map<String, dynamic>)
-            ? firstLeg['distance']['text']?.toString()
-            : null;
-        final distanceValue = (firstLeg['distance'] is Map<String, dynamic>)
-            ? (firstLeg['distance']['value'] as num?)?.toDouble()
-            : null;
-        final durationText =
-            (firstLeg['duration_in_traffic'] is Map<String, dynamic>)
-            ? firstLeg['duration_in_traffic']['text']?.toString()
-            : (firstLeg['duration'] is Map<String, dynamic>)
-            ? firstLeg['duration']['text']?.toString()
-            : null;
+            (item['durationInTrafficSeconds'] as num?)?.toInt();
+        final durationValue = (item['durationSeconds'] as num?)?.toInt();
+        final distanceText = item['distanceText']?.toString();
+        final distanceValue = (item['distanceMeters'] as num?)?.toDouble();
+        final durationText = item['durationText']?.toString();
         final routePoints = _decodePolyline(points);
         if (routePoints.isEmpty) continue;
         final routeScore = _scoreRouteSafety(
@@ -941,7 +924,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
         );
 
         parsedRoutes.add(
-          _DirectionRoute(
+          MapDirectionRoute(
             routeId: 'route_${routeCounter++}',
             encodedPolyline: points,
             etaSeconds: durationInTrafficValue ?? durationValue ?? 1 << 30,
@@ -1008,7 +991,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       });
       _publishMapRouteToGuard(
         routePoints: routePoints,
-        destinationName: _selectedDestinationName ?? 'selected destination',
+        destinationName:
+            _selectedDestinationName ??
+            l10nSync('mapSelectedDestinationFallback'),
         safetyScore:
             routeAssessment?.averageSafetyScore ?? selectedRoute.safetyScore,
         safetyReason: routeAssessment?.summary ?? selectedRoute.safetyReason,
@@ -1038,20 +1023,22 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       });
       _publishMapRouteToGuard(
         routePoints: fallbackPoints,
-        destinationName: _selectedDestinationName ?? 'selected destination',
+        destinationName:
+            _selectedDestinationName ??
+            l10nSync('mapSelectedDestinationFallback'),
         safetyScore: fallbackScore.score,
         safetyReason: fallbackScore.reason,
       );
     }
   }
 
-  Future<_RouteAssessmentResult> _assessRouteCandidates({
+  Future<MapRouteAssessmentResult> _assessRouteCandidates({
     required LatLng origin,
     required LatLng destination,
-    required List<_DirectionRoute> parsedRoutes,
+    required List<MapDirectionRoute> parsedRoutes,
   }) async {
     if (parsedRoutes.isEmpty) {
-      return const _RouteAssessmentResult(
+      return const MapRouteAssessmentResult(
         recommendedRouteId: null,
         byRouteId: {},
       );
@@ -1105,14 +1092,14 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
 
       final routes = (data['routes'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
-          .map(_RouteAssessmentDisplay.fromJson)
+          .map(MapRouteAssessmentDisplay.fromJson)
           .toList(growable: false);
-      return _RouteAssessmentResult(
+      return MapRouteAssessmentResult(
         recommendedRouteId: data['recommendedRouteId']?.toString(),
         byRouteId: {for (final route in routes) route.id: route},
       );
     } catch (_) {
-      return const _RouteAssessmentResult(
+      return const MapRouteAssessmentResult(
         recommendedRouteId: null,
         byRouteId: {},
       );
@@ -1196,7 +1183,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     return total;
   }
 
-  _RouteSafetyScore _scoreRouteSafety({
+  MapRouteSafetyScore _scoreRouteSafety({
     required List<LatLng> routePoints,
     required int? etaSeconds,
     required double distanceMeters,
@@ -1228,7 +1215,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
         ? 'Night route, limited mapped emergency points'
         : 'Balanced by route length and nearby services';
 
-    return _RouteSafetyScore(score: score, reason: reason);
+    return MapRouteSafetyScore(score: score, reason: reason);
   }
 
   double _nearestPointDistance(List<LatLng> routePoints, LatLng target) {
@@ -1274,58 +1261,6 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     _selectDestination(point, AppLocalizations.of(context).t('customPin'));
   }
 
-  Widget _buildJourneyAlertBanner(
-    BuildContext context,
-    SafetyMonitorState safetyState,
-    bool isLight,
-  ) {
-    final alert = safetyState.journeyInAppAlert;
-    final isCritical = alert?.priority == 'critical';
-    final color = isCritical
-        ? const Color(0xFFB91C1C)
-        : const Color(0xFFB45309);
-    final title =
-        alert?.title ?? AppLocalizations.of(context).t('journeyRerouteHint');
-    final body = alert?.body ?? safetyState.rerouteHint ?? '';
-
-    return Material(
-      elevation: 4,
-      borderRadius: BorderRadius.circular(14),
-      color: color.withValues(alpha: isLight ? 0.12 : 0.22),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                color: isLight ? const Color(0xFF172235) : Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-            if (body.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                body,
-                style: TextStyle(
-                  color: isLight ? const Color(0xFF475569) : Colors.white70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final isLight = Theme.of(context).brightness == Brightness.light;
@@ -1347,7 +1282,14 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       body: Stack(
         children: [
           if (position == null)
-            _buildLocatingView(isLight)
+            MapLocatingView(
+              isLoading: _isLoading,
+              isLight: isLight,
+              statusText: _statusText,
+              onRetry: _initializeMap,
+              onDialPolice: () => _dialNumber('100'),
+              onDialHelpline: () => _dialNumber('1091'),
+            )
           else
             GoogleMap(
               initialCameraPosition: CameraPosition(
@@ -1371,8 +1313,54 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
               mapType: _mapType,
             ),
           if (position != null) ...[
-            _buildTopSearchBar(),
-            _buildQuickControls(),
+            MapTopSearchBar(
+              isSearchOpen: _isSearchOpen,
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              isLoadingSuggestions: _isLoadingSuggestions,
+              suggestions: _suggestions,
+              onChanged: _onSearchChanged,
+              onSearch: _searchLocation,
+              onOpen: _openSearch,
+              onClose: _closeSearch,
+              onSuggestionTap: _selectSuggestion,
+            ),
+            MapQuickControls(
+              isSearchOpen: _isSearchOpen,
+              followMe: _followMe,
+              showPlacesList: _showPlacesList,
+              trafficEnabled: _trafficEnabled,
+              onMyLocationTap: () {
+                setState(() => _followMe = !_followMe);
+                if (_followMe) {
+                  _goToMyLocation();
+                }
+              },
+              onTogglePlacesList: () =>
+                  setState(() => _showPlacesList = !_showPlacesList),
+              onToggleTraffic: () =>
+                  setState(() => _trafficEnabled = !_trafficEnabled),
+              onLayersTap: _showLayerOptionsSheet,
+              onToiletsTap: _openNearbyCleanToilets,
+              onSafetyTap: _openLiveSafetySheet,
+            ),
+            if (_isOffline)
+              MapOfflineBanner(
+                isSearchOpen: _isSearchOpen,
+                isLight: isLight,
+                onDialPolice: () => _dialNumber('100'),
+                onDialHelpline: () => _dialNumber('1091'),
+              ),
+            if (_showPlacesList)
+              MapPlacesListPanel(
+                isLight: isLight,
+                isOffline: _isOffline,
+                isSearchOpen: _isSearchOpen,
+                markers: _markers,
+                onClose: () => setState(() => _showPlacesList = false),
+                onPlaceTap: (position, title) =>
+                    unawaited(_presentNearbyLocationChooser(position, title)),
+              ),
           ],
           if (_journeyActive &&
               (safetyState.journeyInAppAlert != null ||
@@ -1381,51 +1369,59 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
               top: 78,
               left: 16,
               right: 16,
-              child: _buildJourneyAlertBanner(context, safetyState, isLight),
+              child: JourneyAlertBanner(
+                safetyState: safetyState,
+                isLight: isLight,
+              ),
             ),
           Positioned(
             left: 16,
             right: 16,
             bottom: journeyPanelOffset,
             child: IgnorePointer(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: isLight
-                      ? const Color(0xFFFFFFFF).withValues(alpha: 0.9)
-                      : AppTheme.cardColor.withValues(alpha: 0.76),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isLight
-                        ? const Color(0xFFDCE5F6)
-                        : Colors.white.withValues(alpha: 0.14),
+              child: Semantics(
+                label:
+                    _statusText ??
+                    'Long press to drop pin. Tap markers to preview route.',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
                   ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.tips_and_updates_rounded,
-                      size: 17,
-                      color: AppTheme.secondaryColor,
+                  decoration: BoxDecoration(
+                    color: isLight
+                        ? const Color(0xFFFFFFFF).withValues(alpha: 0.9)
+                        : AppTheme.cardColor.withValues(alpha: 0.76),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isLight
+                          ? const Color(0xFFDCE5F6)
+                          : Colors.white.withValues(alpha: 0.14),
                     ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Text(
-                        _statusText ??
-                            'Long press to drop pin. Tap markers to preview route.',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isLight ? Color(0xFF546784) : Colors.white70,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.tips_and_updates_rounded,
+                        size: 17,
+                        color: AppTheme.secondaryColor,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          _statusText ??
+                              'Long press to drop pin. Tap markers to preview route.',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isLight ? Color(0xFF546784) : Colors.white70,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1435,641 +1431,20 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
               child: CircularProgressIndicator(color: AppTheme.primaryColor),
             ),
           if (position != null && _selectedDestination != null)
-            _buildJourneyPanel(isLight),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildJourneyPanel(bool isLight) {
-    final destinationName = _selectedDestinationName ?? 'Selected destination';
-    final remaining = _remainingDistanceMeters;
-    final eta = _remainingEtaSeconds;
-    final routeDistance = _routeDistanceMeters;
-    final compact = _journeyPanelCollapsed;
-    final progress = (routeDistance != null && routeDistance > 0)
-        ? (_coveredDistanceMeters / routeDistance).clamp(0.0, 1.0)
-        : 0.0;
-    final accentColor = _journeyActive
-        ? const Color(0xFF0F766E)
-        : const Color(0xFF4A148C);
-    final accentSoft = _journeyActive
-        ? const Color(0xFF14B8A6)
-        : const Color(0xFF7C3AED);
-    final topGradient = isLight
-        ? [
-            const Color(0xFFFFFFFF).withValues(alpha: 0.70),
-            const Color(0xFFF8FBFF).withValues(alpha: 0.58),
-            const Color(0xFFEEF4FF).withValues(alpha: 0.50),
-          ]
-        : [
-            const Color(0xFF1A2337).withValues(alpha: 0.72),
-            const Color(0xFF121B2D).withValues(alpha: 0.62),
-            const Color(0xFF0A1221).withValues(alpha: 0.54),
-          ];
-    final statusPillGradient = _journeyActive
-        ? const [Color(0xFF0F766E), Color(0xFF14B8A6)]
-        : const [Color(0xFF4A148C), Color(0xFF7C3AED)];
-    final safeBottom = MediaQuery.of(context).padding.bottom;
-    return Positioned(
-      left: 16,
-      right: 16,
-      bottom: 12,
-      child: GestureDetector(
-        onVerticalDragEnd: (details) {
-          final velocity = details.primaryVelocity ?? 0;
-          if (velocity > 180) {
-            _setJourneyPanelCollapsed(true);
-          } else if (velocity < -180) {
-            _setJourneyPanelCollapsed(false);
-          }
-        },
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              padding: EdgeInsets.fromLTRB(
-                16,
-                compact ? 8 : 10,
-                16,
-                (compact ? 8 : 12) + safeBottom,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: topGradient,
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: isLight
-                      ? const Color(0xFFFFFFFF).withValues(alpha: 0.58)
-                      : Colors.white.withValues(alpha: 0.16),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(
-                      alpha: isLight ? 0.10 : 0.26,
-                    ),
-                    blurRadius: 28,
-                    offset: const Offset(0, 14),
-                  ),
-                ],
-              ),
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () =>
-                            _setJourneyPanelCollapsed(!_journeyPanelCollapsed),
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 10, top: 2),
-                          child: Container(
-                            width: 44,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: isLight
-                                  ? const Color(
-                                      0xFFAFC1DE,
-                                    ).withValues(alpha: 0.72)
-                                  : Colors.white.withValues(alpha: 0.24),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (compact) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  eta == null ? '--' : _formatDuration(eta),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLight
-                                        ? const Color(0xFF172235)
-                                        : Colors.white,
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  remaining == null
-                                      ? destinationName
-                                      : 'Remaining ${_formatDistance(remaining)}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLight
-                                        ? const Color(0xFF60708B)
-                                        : Colors.white70,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  destinationName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLight
-                                        ? const Color(0xFF8A98AE)
-                                        : Colors.white54,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          _journeyActionButton(
-                            label: _journeyActive ? 'Stop' : 'Start',
-                            icon: _journeyActive
-                                ? Icons.stop_rounded
-                                : Icons.play_arrow_rounded,
-                            onTap: _journeyActive
-                                ? _stopJourney
-                                : _startJourney,
-                            isLight: isLight,
-                            backgroundColor: _journeyActive
-                                ? const Color(0xFFDC2626)
-                                : accentColor,
-                          ),
-                          const SizedBox(width: 8),
-                          _journeyRoundButton(
-                            icon: Icons.keyboard_arrow_up_rounded,
-                            onTap: () => _setJourneyPanelCollapsed(
-                              !_journeyPanelCollapsed,
-                            ),
-                            isLight: isLight,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              routeDistance == null
-                                  ? AppLocalizations.of(
-                                      context,
-                                    ).t('calculatingRoute')
-                                  : '${_formatDistance(routeDistance)} total route',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: isLight
-                                    ? const Color(0xFF60708B)
-                                    : Colors.white60,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${(progress * 100).round()}%',
-                            style: TextStyle(
-                              color: isLight
-                                  ? const Color(0xFF344256)
-                                  : Colors.white70,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ] else ...[
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: statusPillGradient,
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    _journeyActive
-                                        ? 'Live navigation'
-                                        : 'Route preview',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Text(
-                                  destinationName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLight
-                                        ? const Color(0xFF172235)
-                                        : Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _journeyActive
-                                      ? AppLocalizations.of(
-                                          context,
-                                        ).t('followingYourRoute')
-                                      : AppLocalizations.of(context).t(
-                                          'readyWithDistanceAndEstimatedTravelTime',
-                                        ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: isLight
-                                        ? const Color(0xFF60708B)
-                                        : Colors.white70,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            children: [
-                              _journeyRoundButton(
-                                icon: Icons.keyboard_arrow_down_rounded,
-                                onTap: () => _setJourneyPanelCollapsed(
-                                  !_journeyPanelCollapsed,
-                                ),
-                                isLight: isLight,
-                              ),
-                              const SizedBox(height: 10),
-                              _journeyActionButton(
-                                label: AppLocalizations.of(
-                                  context,
-                                ).t(_journeyActive ? 'stop' : 'start'),
-                                icon: _journeyActive
-                                    ? Icons.stop_rounded
-                                    : Icons.play_arrow_rounded,
-                                onTap: _journeyActive
-                                    ? _stopJourney
-                                    : _startJourney,
-                                isLight: isLight,
-                                backgroundColor: _journeyActive
-                                    ? const Color(0xFFDC2626)
-                                    : accentColor,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                    ],
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        minHeight: compact ? 8 : 7,
-                        value: progress,
-                        backgroundColor: isLight
-                            ? const Color(0xFFDDE7F6).withValues(alpha: 0.48)
-                            : Colors.white.withValues(alpha: 0.10),
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          _journeyActive ? accentSoft : accentColor,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (!compact) ...[
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.route_rounded,
-                            size: 15,
-                            color: isLight
-                                ? const Color(0xFF60708B)
-                                : Colors.white60,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              routeDistance == null
-                                  ? AppLocalizations.of(
-                                      context,
-                                    ).t('calculatingRouteDistance')
-                                  : '${_formatDistance(routeDistance)} total route',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: isLight
-                                    ? const Color(0xFF60708B)
-                                    : Colors.white60,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            '${(progress * 100).round()}%',
-                            style: TextStyle(
-                              color: isLight
-                                  ? const Color(0xFF344256)
-                                  : Colors.white70,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _journeyStat(
-                              label: AppLocalizations.of(context).t('covered'),
-                              value: _formatDistance(_coveredDistanceMeters),
-                              isLight: isLight,
-                              icon: Icons.explore_rounded,
-                              accent: const Color(0xFF14B8A6),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _journeyStat(
-                              label: AppLocalizations.of(
-                                context,
-                              ).t('remaining'),
-                              value: remaining == null
-                                  ? '--'
-                                  : _formatDistance(remaining),
-                              isLight: isLight,
-                              icon: Icons.alt_route_rounded,
-                              accent: accentSoft,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _journeyStat(
-                              label: AppLocalizations.of(context).t('eta'),
-                              value: eta == null ? '--' : _formatDuration(eta),
-                              isLight: isLight,
-                              icon: Icons.schedule_rounded,
-                              accent: accentColor,
-                              emphasizeValue: true,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+            JourneyPanel(
+              isLight: isLight,
+              journeyActive: _journeyActive,
+              journeyPanelCollapsed: _journeyPanelCollapsed,
+              selectedDestinationName: _selectedDestinationName,
+              coveredDistanceMeters: _coveredDistanceMeters,
+              routeDistanceMeters: _routeDistanceMeters,
+              remainingDistanceMeters: _remainingDistanceMeters,
+              remainingEtaSeconds: _remainingEtaSeconds,
+              onSetCollapsed: _setJourneyPanelCollapsed,
+              onStartJourney: _startJourney,
+              onStopJourney: _stopJourney,
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _journeyActionButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onTap,
-    required bool isLight,
-    required Color backgroundColor,
-  }) {
-    return Material(
-      color: backgroundColor,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 18, color: Colors.white),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _journeyRoundButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    required bool isLight,
-    bool filled = false,
-    Color? fillColor,
-  }) {
-    return Material(
-      color: filled
-          ? (fillColor ?? AppTheme.primaryColor)
-          : (isLight
-                ? const Color(0xFFF6F9FF)
-                : Colors.white.withValues(alpha: 0.06)),
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Icon(
-            icon,
-            size: 20,
-            color: filled
-                ? Colors.white
-                : (isLight ? const Color(0xFF344256) : Colors.white70),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _journeyStat({
-    required String label,
-    required String value,
-    required bool isLight,
-    required IconData icon,
-    required Color accent,
-    bool emphasizeValue = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isLight
-              ? [
-                  const Color(0xFFF8FBFF),
-                  Color.lerp(const Color(0xFFF0F6FF), accent, 0.10)!,
-                ]
-              : [
-                  Colors.white.withValues(alpha: 0.05),
-                  accent.withValues(alpha: 0.12),
-                ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: accent.withValues(alpha: isLight ? 0.18 : 0.22),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 15, color: accent),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isLight ? const Color(0xFF65758F) : Colors.white60,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isLight ? const Color(0xFF172235) : Colors.white,
-                fontSize: emphasizeValue ? 16 : 14,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0,
-              ),
-            ),
-          ),
         ],
-      ),
-    );
-  }
-
-  String _formatDistance(double meters) {
-    if (meters >= 1000) {
-      return '${(meters / 1000).toStringAsFixed(meters >= 10000 ? 0 : 1)} km';
-    }
-    return '${meters.round()} m';
-  }
-
-  String _formatDuration(int seconds) {
-    if (seconds < 60) return '<1 min';
-
-    final minutes = (seconds / 60).round();
-    if (minutes < 60) return '$minutes min';
-
-    final hours = minutes ~/ 60;
-    final remainingMinutes = minutes % 60;
-    if (remainingMinutes == 0) return '${hours}h';
-    return '${hours}h ${remainingMinutes}m';
-  }
-
-  Widget _buildLocatingView(bool isLight) {
-    final canRetry = !_isLoading && _statusText != null;
-
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      color: isLight ? const Color(0xFFF4F7FB) : AppTheme.backgroundColor,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_isLoading)
-                const CircularProgressIndicator(color: AppTheme.primaryColor)
-              else
-                Icon(
-                  Icons.location_searching_rounded,
-                  size: 42,
-                  color: isLight ? AppTheme.primaryColor : Colors.white70,
-                ),
-              const SizedBox(height: 18),
-              Text(
-                _statusText ?? 'Fetching your current location...',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isLight ? const Color(0xFF26364D) : Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                AppLocalizations.of(context).t('mapWillOpenAroundYou'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isLight ? const Color(0xFF65758F) : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (canRetry) ...[
-                const SizedBox(height: 18),
-                ElevatedButton.icon(
-                  onPressed: _initializeMap,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: Text(AppLocalizations.of(context).t('tryAgain')),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -2090,223 +1465,16 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     });
   }
 
-  Widget _buildTopSearchBar() {
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    return Positioned(
-      top: 16,
-      right: 16,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: SizeTransition(
-              sizeFactor: animation,
-              axis: Axis.horizontal,
-              axisAlignment: 1,
-              child: child,
-            ),
-          );
-        },
-        child: _isSearchOpen
-            ? Container(
-                key: const ValueKey('search_open'),
-                width: MediaQuery.of(context).size.width * 0.72,
-                decoration: BoxDecoration(
-                  color: isLight
-                      ? const Color(0xFFFFFFFF).withValues(alpha: 0.96)
-                      : AppTheme.cardColor.withValues(alpha: 0.92),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: isLight ? 0.12 : 0.22,
-                      ),
-                      blurRadius: 16,
-                      offset: Offset(0, 8),
-                    ),
-                  ],
-                  border: Border.all(
-                    color: isLight
-                        ? const Color(0xFFD6E4FB)
-                        : Colors.white.withValues(alpha: 0.14),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        const SizedBox(width: 10),
-                        Icon(
-                          Icons.search,
-                          color: isLight
-                              ? const Color(0xFF5F6F8A)
-                              : Colors.white70,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: TextField(
-                            controller: _searchController,
-                            focusNode: _searchFocusNode,
-                            autofocus: false,
-                            textInputAction: TextInputAction.search,
-                            onChanged: _onSearchChanged,
-                            onSubmitted: (_) => _searchLocation(),
-                            style: TextStyle(
-                              color: isLight
-                                  ? const Color(0xFF172235)
-                                  : Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: AppLocalizations.of(
-                                context,
-                              ).t('searchLocation'),
-                              hintStyle: TextStyle(
-                                color: isLight
-                                    ? const Color(0xFF7E8DA6)
-                                    : Colors.white54,
-                              ),
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: _searchLocation,
-                          icon: const Icon(
-                            Icons.arrow_forward,
-                            color: AppTheme.primaryColor,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: _closeSearch,
-                          icon: Icon(
-                            Icons.close,
-                            color: isLight
-                                ? const Color(0xFF5F6F8A)
-                                : Colors.white70,
-                            size: 20,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_isLoadingSuggestions)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 12),
-                        child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    else if (_suggestions.isNotEmpty)
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 220),
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: _suggestions.length,
-                          separatorBuilder: (context, index) => Divider(
-                            height: 1,
-                            color: isLight
-                                ? const Color(0xFFE3EBF7)
-                                : Colors.white.withValues(alpha: 0.1),
-                          ),
-                          itemBuilder: (context, index) {
-                            final suggestion = _suggestions[index];
-                            return ListTile(
-                              dense: true,
-                              leading: Icon(
-                                Icons.location_on_outlined,
-                                color: isLight
-                                    ? const Color(0xFF5F6F8A)
-                                    : Colors.white70,
-                              ),
-                              title: Text(
-                                suggestion.title,
-                                style: TextStyle(
-                                  color: isLight
-                                      ? const Color(0xFF172235)
-                                      : Colors.white,
-                                ),
-                              ),
-                              subtitle: suggestion.subtitle.isNotEmpty
-                                  ? Text(
-                                      suggestion.subtitle,
-                                      style: TextStyle(
-                                        color: isLight
-                                            ? const Color(0xFF7E8DA6)
-                                            : Colors.white60,
-                                        fontSize: 12,
-                                      ),
-                                    )
-                                  : null,
-                              onTap: () => _selectSuggestion(suggestion),
-                            );
-                          },
-                        ),
-                      ),
-                  ],
-                ),
-              )
-            : Material(
-                key: const ValueKey('search_closed'),
-                color: AppTheme.cardColor,
-                shape: const CircleBorder(),
-                elevation: isLight ? 3 : 5,
-                shadowColor: Colors.black.withValues(
-                  alpha: isLight ? 0.14 : 0.3,
-                ),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: _openSearch,
-                  child: const Padding(
-                    padding: EdgeInsets.all(13),
-                    child: Icon(Icons.search, color: Colors.white, size: 21),
-                  ),
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildQuickControls() {
-    return Positioned(
-      right: 16,
-      top: _isSearchOpen ? 82 : 92,
-      child: Column(
-        children: <Widget>[
-          _circleControl(
-            icon: _followMe ? Icons.gps_fixed : Icons.gps_not_fixed,
-            onTap: () {
-              setState(() => _followMe = !_followMe);
-              if (_followMe) {
-                _goToMyLocation();
-              }
-            },
-          ),
-          const SizedBox(height: 10),
-          _circleControl(
-            icon: _trafficEnabled ? Icons.traffic : Icons.traffic_outlined,
-            onTap: () {
-              setState(() => _trafficEnabled = !_trafficEnabled);
-            },
-          ),
-          const SizedBox(height: 10),
-          _circleControl(icon: Icons.layers, onTap: _showLayerOptionsSheet),
-          const SizedBox(height: 10),
-          _circleControl(
-            icon: Icons.wc_rounded,
-            onTap: _openNearbyCleanToilets,
-          ),
-          const SizedBox(height: 10),
-          _circleControl(icon: Icons.safety_check, onTap: _openLiveSafetySheet),
-        ],
-      ),
-    );
+  Future<void> _dialNumber(String number) async {
+    final uri = Uri(scheme: 'tel', path: number);
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context).t('couldNotOpenDialer')),
+        ),
+      );
+    }
   }
 
   void _openNearbyCleanToilets() {
@@ -2421,13 +1589,15 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
                       subtitle: Text(
                         _publicToiletsEnabled
                             ? _publicToiletsLoading
-                                  ? AppLocalizations.of(context)
-                                        .t('toiletsLoadingNearby')
+                                  ? AppLocalizations.of(
+                                      context,
+                                    ).t('toiletsLoadingNearby')
                                   : _publicToiletsError ??
                                         (_publicToiletsFetchSucceeded &&
                                                 _publicToilets.isEmpty
-                                            ? AppLocalizations.of(context)
-                                                  .t('toiletsNoToiletsInArea')
+                                            ? AppLocalizations.of(
+                                                context,
+                                              ).t('toiletsNoToiletsInArea')
                                             : AppLocalizations.of(context)
                                                   .t('toiletsOnMapCount')
                                                   .replaceAll(
@@ -2518,8 +1688,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
       setState(() {
         _publicToilets.clear();
         _publicToiletMarkers.clear();
-        _publicToiletsError =
-            AppLocalizations.of(context).t('toiletsConnectionError');
+        _publicToiletsError = AppLocalizations.of(
+          context,
+        ).t('toiletsConnectionError');
         _publicToiletsLoading = false;
         _publicToiletsFetchSucceeded = false;
       });
@@ -2570,8 +1741,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
         return LiveSafetyControlsSheet(
           position: _position,
           safetyScore: safetyState.safetyScore,
-          riskLevel: AppLocalizations.of(context)
-              .localizeRiskLabel(safetyState.riskLabel),
+          riskLevel: AppLocalizations.of(
+            context,
+          ).localizeRiskLabel(safetyState.riskLabel),
           aiConfidence: safetyState.aiConfidenceVisible
               ? safetyState.aiConfidence
               : null,
@@ -2591,24 +1763,18 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     );
   }
 
-  Widget _circleControl({required IconData icon, required VoidCallback onTap}) {
-    return Material(
-      color: AppTheme.cardColor,
-      shape: const CircleBorder(),
-      elevation: 6,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(13),
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-      ),
-    );
-  }
-
   Set<Circle> _buildHeatmapCircles(SafetyMonitorState safetyState) {
-    return safetyState.heatmapTiles
+    final tiles = safetyState.heatmapTiles;
+    // Heatmap tiles are only replaced (new list instance) when the backend
+    // actually returns fresh data — reuse the previously built circles when
+    // the tiles list reference hasn't changed to avoid rebuilding on every
+    // unrelated safety-state emission.
+    if (_cachedHeatmapCircles != null &&
+        identical(_cachedHeatmapTilesRef, tiles)) {
+      return _cachedHeatmapCircles!;
+    }
+
+    final circles = tiles
         .map(
           (tile) => Circle(
             circleId: CircleId('heat_${tile.latitude}_${tile.longitude}'),
@@ -2620,6 +1786,10 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
           ),
         )
         .toSet();
+
+    _cachedHeatmapTilesRef = tiles;
+    _cachedHeatmapCircles = circles;
+    return circles;
   }
 
   Color _colorFromHex(String value) {
@@ -2627,86 +1797,4 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
     final hex = normalized.length == 6 ? 'FF$normalized' : normalized;
     return Color(int.tryParse(hex, radix: 16) ?? 0xFFEAB308);
   }
-}
-
-class _PlaceSuggestion {
-  const _PlaceSuggestion({
-    required this.placeId,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final String placeId;
-  final String title;
-  final String subtitle;
-}
-
-class _NearbyFetchResult {
-  const _NearbyFetchResult({this.markers = const {}, this.errorMessage});
-
-  final Set<Marker> markers;
-  final String? errorMessage;
-}
-
-class _DirectionRoute {
-  const _DirectionRoute({
-    required this.routeId,
-    required this.encodedPolyline,
-    required this.etaSeconds,
-    required this.distanceMeters,
-    required this.distanceText,
-    required this.durationText,
-    required this.safetyScore,
-    required this.safetyReason,
-  });
-
-  final String routeId;
-  final String encodedPolyline;
-  final int etaSeconds;
-  final double? distanceMeters;
-  final String distanceText;
-  final String durationText;
-  final int safetyScore;
-  final String safetyReason;
-}
-
-class _RouteSafetyScore {
-  const _RouteSafetyScore({required this.score, required this.reason});
-
-  final int score;
-  final String reason;
-}
-
-class _RouteAssessmentResult {
-  const _RouteAssessmentResult({
-    required this.recommendedRouteId,
-    required this.byRouteId,
-  });
-
-  final String? recommendedRouteId;
-  final Map<String, _RouteAssessmentDisplay> byRouteId;
-}
-
-class _RouteAssessmentDisplay {
-  const _RouteAssessmentDisplay({
-    required this.id,
-    required this.label,
-    required this.averageSafetyScore,
-    required this.summary,
-  });
-
-  factory _RouteAssessmentDisplay.fromJson(Map<String, dynamic> json) {
-    return _RouteAssessmentDisplay(
-      id: json['id']?.toString() ?? '',
-      label: json['label']?.toString() ?? 'Safer Route',
-      averageSafetyScore: (json['averageSafetyScore'] as num?)?.round() ?? 50,
-      summary:
-          json['summary']?.toString() ?? 'Balanced route guidance applied.',
-    );
-  }
-
-  final String id;
-  final String label;
-  final int averageSafetyScore;
-  final String summary;
 }

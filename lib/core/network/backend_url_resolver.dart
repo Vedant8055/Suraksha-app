@@ -14,6 +14,7 @@ class BackendUrlResolver {
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   static Future<String?> savedOverride() async {
+    if (!kDebugMode) return null;
     final prefs = await SharedPreferences.getInstance();
     final value = prefs.getString(_prefKey)?.trim();
     if (value == null || value.isEmpty) return null;
@@ -21,6 +22,7 @@ class BackendUrlResolver {
   }
 
   static Future<void> saveOverride(String url) async {
+    if (!kDebugMode) return;
     final normalized = url.trim().replaceAll(RegExp(r'/$'), '');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, normalized);
@@ -32,6 +34,7 @@ class BackendUrlResolver {
   }
 
   static List<String> candidateUrls() {
+    if (!kDebugMode) return [ApiConfig.preferredBaseUrl];
     final urls = <String>[];
     void add(String? raw) {
       if (raw == null || raw.trim().isEmpty) return;
@@ -70,6 +73,10 @@ class BackendUrlResolver {
   }
 
   static Future<bool> recoverConnection(Dio dio) async {
+    if (!kDebugMode) {
+      dio.options.baseUrl = ApiConfig.preferredBaseUrl;
+      return _probe(ApiConfig.preferredBaseUrl);
+    }
     await clearOverride();
     for (final candidate in candidateUrls()) {
       if (!await _probe(candidate)) continue;

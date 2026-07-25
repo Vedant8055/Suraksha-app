@@ -1,4 +1,5 @@
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/features/sos/distress/distress_task_handler.dart';
 
 class DistressForegroundController {
@@ -36,6 +37,7 @@ class DistressForegroundController {
   static Future<bool> start({
     required String sensitivity,
     required bool testMode,
+    bool allowBatteryPrompt = false,
   }) async {
     await ensureInitialized();
 
@@ -45,16 +47,21 @@ class DistressForegroundController {
       await FlutterForegroundTask.requestNotificationPermission();
     }
 
-    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+    // Only prompt after the user has seen the in-app battery explainer.
+    if (allowBatteryPrompt &&
+        !await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
       await FlutterForegroundTask.requestIgnoreBatteryOptimization();
     }
 
     if (await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.updateService(
-        notificationTitle: 'Suraksha distress monitor active',
+        notificationTitle: l10nSync('distressMonitorNotificationTitle'),
         notificationText: testMode
-            ? 'Test mode — no SOS will be sent.'
-            : 'Listening for screams and help phrases offline.',
+            ? l10nSync('distressMonitorTestModeNotification')
+            : l10nSync('distressMonitorNotificationText'),
+        notificationButtons: const [
+          NotificationButton(id: 'stop_monitoring', text: 'Stop'),
+        ],
       );
       FlutterForegroundTask.sendDataToTask({
         'cmd': 'config',
@@ -65,10 +72,13 @@ class DistressForegroundController {
     }
 
     final result = await FlutterForegroundTask.startService(
-      notificationTitle: 'Suraksha distress monitor active',
+      notificationTitle: l10nSync('distressMonitorNotificationTitle'),
       notificationText: testMode
-          ? 'Test mode — no SOS will be sent.'
-          : 'Listening offline for screams and distress phrases.',
+          ? l10nSync('distressMonitorTestModeNotification')
+          : l10nSync('distressMonitorNotificationText'),
+      notificationButtons: const [
+        NotificationButton(id: 'stop_monitoring', text: 'Stop'),
+      ],
       callback: startDistressTaskCallback,
     );
     return result is ServiceRequestSuccess;
@@ -78,6 +88,16 @@ class DistressForegroundController {
     if (await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.stopService();
     }
+  }
+
+  static Future<bool> isBatteryRestricted() async {
+    await ensureInitialized();
+    return !await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+  }
+
+  static Future<bool> openBatterySettings() async {
+    await ensureInitialized();
+    return FlutterForegroundTask.openIgnoreBatteryOptimizationSettings();
   }
 
   static void addDataListener(void Function(Object data) listener) {

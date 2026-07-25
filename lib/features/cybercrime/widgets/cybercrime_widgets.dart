@@ -196,12 +196,14 @@ class CyberTextInput extends StatelessWidget {
     required this.label,
     required this.hint,
     this.onSubmitted,
+    this.maxLength,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
   final ValueChanged<String>? onSubmitted;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -209,8 +211,12 @@ class CyberTextInput extends StatelessWidget {
     return TextField(
       controller: controller,
       onSubmitted: onSubmitted,
+      maxLength: maxLength,
       style: TextStyle(color: isLight ? PremiumCyberTheme.titleText : Colors.white),
-      decoration: cyberInputDecoration(context, label).copyWith(hintText: hint),
+      decoration: cyberInputDecoration(context, label).copyWith(
+        hintText: hint,
+        counterText: maxLength == null ? null : '',
+      ),
     );
   }
 }
@@ -334,6 +340,32 @@ class CyberAnalysisResultCard extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).brightness == Brightness.light
+                  ? const Color(0xFFFFF7ED)
+                  : const Color(0xFF3F1D0D),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+              ),
+            ),
+            child: Text(
+              l10n.t('cyberAiResultDisclaimer'),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.light
+                    ? const Color(0xFF9A3412)
+                    : Colors.white70,
+                fontSize: 12,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -445,13 +477,13 @@ class CyberEvidenceCard extends StatelessWidget {
     required this.item,
     required this.onPreview,
     required this.onDownload,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final EvidenceItem item;
   final VoidCallback onPreview;
   final VoidCallback onDownload;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   IconData _iconForType() {
     final type = item.fileType ?? '';
@@ -549,13 +581,15 @@ class CyberEvidenceCard extends StatelessWidget {
                   foregroundColor: isLight ? PremiumCyberTheme.bodyText : Colors.white70,
                 ),
               ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: onDelete,
-                icon: Icon(Icons.delete_outline_rounded, size: 18),
-                label: Text(l10n.t('delete')),
-                style: TextButton.styleFrom(foregroundColor: PremiumCyberTheme.error),
-              ),
+              if (onDelete != null) ...[
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: onDelete,
+                  icon: Icon(Icons.delete_outline_rounded, size: 18),
+                  label: Text(l10n.t('delete')),
+                  style: TextButton.styleFrom(foregroundColor: PremiumCyberTheme.error),
+                ),
+              ],
             ],
           ),
         ],

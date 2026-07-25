@@ -10,7 +10,9 @@ ImageProvider<Object>? profilePhotoImageProvider(String? raw) {
 
   final lower = value.toLowerCase();
   if (lower.startsWith('http://') || lower.startsWith('https://')) {
-    return NetworkImage(value);
+    // Decode at a fixed size covering the ~58-120dp avatar usages at up to
+    // 2x pixel ratio, instead of decoding the full-resolution source image.
+    return ResizeImage(NetworkImage(value), width: 240, height: 240);
   }
 
   if (value.contains(':\\') || value.startsWith('/')) {

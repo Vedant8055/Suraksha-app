@@ -5,11 +5,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/cybercrime_constants.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/models/cybercrime_models.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/report_detail_screen.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/services/cyber_protection_service.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/utils/backend_connectivity.dart';
+import 'package:suraksha_women_safety_app/features/cybercrime/utils/cyber_evidence_validation.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/utils/cybercrime_utils.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cyber_multi_select_dropdown.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cyber_portal_filing_card.dart';
@@ -52,6 +54,7 @@ class _CyberReportTabState extends State<CyberReportTab> {
   double? _uploadProgress;
   int _uploadCurrent = 0;
   int _uploadTotal = 0;
+  CancelToken? _uploadCancelToken;
   CyberReportResult? _lastReport;
   bool _lastSubmitWasDraft = false;
   List<CyberReportListItem> _myReports = const [];
@@ -66,6 +69,7 @@ class _CyberReportTabState extends State<CyberReportTab> {
 
   @override
   void dispose() {
+    _uploadCancelToken?.cancel();
     _descriptionController.dispose();
     _suspectController.dispose();
     _transactionController.dispose();
@@ -167,37 +171,121 @@ class _CyberReportTabState extends State<CyberReportTab> {
   Future<int> _uploadReportEvidence(String reportId) async {
     var uploaded = 0;
     final total = _evidence.length;
+    final cancelToken = CancelToken();
     setState(() {
       _uploadTotal = total;
       _uploadCurrent = 0;
       _uploadProgress = total == 0 ? null : 0;
+      _uploadCancelToken = cancelToken;
     });
-    for (var i = 0; i < _evidence.length; i++) {
-      final file = _evidence[i];
-      await widget.service.uploadEvidence(
-        file: file,
-        title: '$_category evidence ${i + 1}',
-        category: 'Screenshot',
-        tags: ['report', _category],
-        privateMode: true,
-        reportId: reportId,
-      );
-      uploaded += 1;
+    try {
+      for (var i = 0; i < _evidence.length; i++) {
+        if (cancelToken.isCancelled) break;
+        final file = _evidence[i];
+        await widget.service.uploadEvidence(
+          file: file,
+          title: '$_category evidence ${i + 1}',
+          category: 'Screenshot',
+          tags: ['report', _category],
+          privateMode: true,
+          reportId: reportId,
+          cancelToken: cancelToken,
+          onSendProgress: (sent, totalBytes) {
+            if (!mounted || totalBytes <= 0 || total == 0) return;
+            final fileFraction = sent / totalBytes;
+            setState(() {
+              _uploadProgress = (uploaded + fileFraction) / total;
+            });
+          },
+        );
+        uploaded += 1;
+        if (mounted) {
+          setState(() {
+            _uploadCurrent = uploaded;
+            _uploadProgress = uploaded / total;
+          });
+        }
+      }
+    } on DioException catch (error) {
+      if (CancelToken.isCancel(error)) {
+        if (mounted) {
+          showCyberSnack(
+            context,
+            AppLocalizations.of(context).t('cyberUploadCancelled'),
+          );
+        }
+      } else {
+        rethrow;
+      }
+    } finally {
       if (mounted) {
         setState(() {
-          _uploadCurrent = uploaded;
-          _uploadProgress = uploaded / total;
+          _uploadProgress = null;
+          _uploadCurrent = 0;
+          _uploadTotal = 0;
+          _uploadCancelToken = null;
         });
       }
     }
-    if (mounted) {
-      setState(() {
-        _uploadProgress = null;
-        _uploadCurrent = 0;
-        _uploadTotal = 0;
-      });
-    }
     return uploaded;
+  }
+
+  void _cancelEvidenceUpload() {
+    _uploadCancelToken?.cancel('user_cancelled');
+  }
+
+  Future<bool> _validateAndOfferAdd(XFile file) async {
+    final l10n = AppLocalizations.of(context);
+    final invalidKey = await CyberEvidenceValidation.validateFile(
+      path: file.path,
+      fileName: file.name,
+    );
+    if (invalidKey != null) {
+      if (mounted) showCyberSnack(context, l10n.t(invalidKey));
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _pickEvidenceFromGallery() async {
+    final ok = await requestGalleryPermission();
+    if (!ok || !mounted) return;
+    final files = await _imagePicker.pickMultiImage();
+    if (files.isEmpty) return;
+    final accepted = <XFile>[];
+    for (final file in files.take(8 - _evidence.length)) {
+      if (await _validateAndOfferAdd(file)) {
+        accepted.add(file);
+      }
+    }
+    if (accepted.isNotEmpty && mounted) {
+      setState(() => _evidence.addAll(accepted));
+    }
+  }
+
+  Future<void> _pickEvidenceFiles() async {
+    final ok = await requestStoragePermission();
+    if (!ok || !mounted) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowMultiple: true,
+      allowedExtensions:
+          CyberEvidenceValidation.allowedExtensions.toList(growable: false),
+    );
+    if (result == null) return;
+    final accepted = <XFile>[];
+    final candidates = result.files
+        .where((file) => file.path != null)
+        .map((file) => XFile(file.path!, name: file.name))
+        .take(8 - _evidence.length);
+    for (final file in candidates) {
+      if (await _validateAndOfferAdd(file)) {
+        accepted.add(file);
+      }
+    }
+    if (accepted.isNotEmpty && mounted) {
+      setState(() => _evidence.addAll(accepted));
+    }
   }
 
   Future<void> _linkVaultEvidence(String reportId) async {
@@ -219,40 +307,6 @@ class _CyberReportTabState extends State<CyberReportTab> {
         ),
       ),
     );
-  }
-
-  Future<void> _pickEvidenceFromGallery() async {
-    final ok = await requestGalleryPermission();
-    if (!ok || !mounted) return;
-    final files = await _imagePicker.pickMultiImage();
-    if (files.isNotEmpty) {
-      setState(() => _evidence.addAll(files.take(8 - _evidence.length)));
-    }
-  }
-
-  Future<void> _pickEvidenceFiles() async {
-    final ok = await requestStoragePermission();
-    if (!ok || !mounted) return;
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowMultiple: true,
-      allowedExtensions: const [
-        'jpg',
-        'jpeg',
-        'png',
-        'pdf',
-        'mp3',
-        'wav',
-        'm4a',
-      ],
-    );
-    if (result == null) return;
-    final files = result.files
-        .where((file) => file.path != null)
-        .map((file) => XFile(file.path!, name: file.name))
-        .take(8 - _evidence.length)
-        .toList();
-    if (files.isNotEmpty) setState(() => _evidence.addAll(files));
   }
 
   Future<void> _pickFromVault() async {
@@ -622,12 +676,16 @@ class _CyberReportTabState extends State<CyberReportTab> {
             runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: _isSubmitting ? null : _pickEvidenceFromGallery,
+                onPressed: (!FeatureFlags.cyberEvidenceUpload || _isSubmitting)
+                    ? null
+                    : _pickEvidenceFromGallery,
                 icon: const Icon(Icons.photo_library_rounded),
                 label: Text(l10n.t('pickFromGallery')),
               ),
               OutlinedButton.icon(
-                onPressed: _isSubmitting ? null : _pickEvidenceFiles,
+                onPressed: (!FeatureFlags.cyberEvidenceUpload || _isSubmitting)
+                    ? null
+                    : _pickEvidenceFiles,
                 icon: const Icon(Icons.upload_file_rounded),
                 label: Text(l10n.t('pickFile')),
               ),
@@ -667,6 +725,13 @@ class _CyberReportTabState extends State<CyberReportTab> {
                     ? const Color(0xFF516078)
                     : Colors.white70,
                 fontSize: 12,
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _cancelEvidenceUpload,
+                child: Text(l10n.t('cyberEvidenceUploadCancel')),
               ),
             ),
             const SizedBox(height: 8),

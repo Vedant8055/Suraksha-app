@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
+import 'package:suraksha_women_safety_app/core/location/location_permission_service.dart';
 import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
 import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
 import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
@@ -384,11 +385,16 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
   double? _journeyDestinationLat;
   double? _journeyDestinationLng;
   String _summaryLang = 'en';
+  bool _emergencyScanInFlight = false;
 
   Duration get _refreshInterval =>
       _journeyMode ? const Duration(seconds: 45) : const Duration(minutes: 2);
 
   int get _moveThresholdMeters => _journeyMode ? 40 : 75;
+
+  /// Minimum movement before we notify listeners with an updated position.
+  /// Tiny GPS jitter below this threshold does not warrant a state emission.
+  static const int _positionNotifyThresholdMeters = 9;
 
   Duration get _staleAssessmentDuration =>
       _journeyMode ? const Duration(seconds: 40) : const Duration(seconds: 45);
@@ -484,6 +490,29 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
     );
   }
 
+  /// Auto-triggers the 1 km emergency-services scan once per position epoch
+  /// when it hasn't been scanned yet. Guarded so it only ever has a single
+  /// in-flight call at a time (no build-time or duplicate network calls).
+  void _triggerEmergencyScanIfNeeded() {
+    if (state.position == null) return;
+    if (state.emergencyServices1km.scanned) return;
+    if (_emergencyScanInFlight) return;
+    _emergencyScanInFlight = true;
+    unawaited(
+      ensureEmergencyServicesScanned().whenComplete(() {
+        _emergencyScanInFlight = false;
+      }),
+    );
+  }
+
+  /// Auto-triggers the area intelligence refresh once per position epoch
+  /// when the area assessment isn't ready yet and no refresh is in flight.
+  void _triggerIntelligenceRefreshIfNeeded(Position position) {
+    if (state.areaAssessmentReady || state.isRefreshing) return;
+    _lastNearbyRefreshAt = DateTime.now();
+    unawaited(_refreshSafetyIntelligence(position));
+  }
+
   Future<void> stop() async {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
@@ -493,27 +522,25 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
   }
 
   Future<void> _ensureGpsAndPermission() async {
-    final gpsEnabled = await Geolocator.isLocationServiceEnabled();
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    final granted =
-        permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
-    final deniedForever = permission == LocationPermission.deniedForever;
+    // Central gate: only this path may prompt for location permission.
+    final access = await LocationPermissionService.ensureAccess(
+      mayRequest: true,
+    );
+    final granted = access.isGranted;
+    final deniedForever = access.isDeniedForever;
 
     state = state.copyWith(
-      gpsEnabled: gpsEnabled,
+      gpsEnabled: access.gpsEnabled,
       permissionGranted: granted,
-      statusMessage: !gpsEnabled
+      statusMessage: !access.gpsEnabled
           ? 'statusGpsOff'
           : deniedForever
           ? 'statusLocationDeniedForever'
           : !granted
           ? 'statusLocationPermissionRequired'
           : 'statusGpsConnected',
-      riskLabel: !gpsEnabled || !granted ? 'Location Off' : state.riskLabel,
+      riskLabel:
+          !access.gpsEnabled || !granted ? 'Location Off' : state.riskLabel,
     );
   }
 
@@ -536,6 +563,8 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
           trackingActive: true,
           statusMessage: 'statusFetchingIntelligence',
         );
+        // _refreshSafetyIntelligence scans emergency services internally, so
+        // no separate auto-trigger is needed on this path.
         await _refreshSafetyIntelligence(pos, force: true);
       }
     } catch (_) {}
@@ -562,11 +591,27 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
     _positionSubscription =
         Geolocator.getPositionStream(locationSettings: settings).listen(
           (pos) {
-            state = state.copyWith(
-              position: pos,
-              trackingActive: true,
-              lastUpdatedAt: DateTime.now(),
-            );
+            // Skip redundant position notifies for tiny GPS jitter, but keep
+            // running the move/stale assessment logic against the new
+            // position so intelligence refreshes are never missed.
+            final previousPosition = state.position;
+            final positionMoved = previousPosition == null
+                ? true
+                : Geolocator.distanceBetween(
+                        previousPosition.latitude,
+                        previousPosition.longitude,
+                        pos.latitude,
+                        pos.longitude,
+                      ) >=
+                      _positionNotifyThresholdMeters;
+
+            if (positionMoved || !state.trackingActive) {
+              state = state.copyWith(
+                position: pos,
+                trackingActive: true,
+                lastUpdatedAt: DateTime.now(),
+              );
+            }
 
             final now = DateTime.now();
             final movedEnough = _lastAssessmentPosition == null
@@ -582,10 +627,13 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
                 _lastNearbyRefreshAt == null ||
                 now.difference(_lastNearbyRefreshAt!) >
                     _staleAssessmentDuration;
-            if (movedEnough || staleAssessment) {
+            if (!state.areaAssessmentReady && !state.isRefreshing) {
+              _triggerIntelligenceRefreshIfNeeded(pos);
+            } else if (movedEnough || staleAssessment) {
               _lastNearbyRefreshAt = now;
               unawaited(_refreshSafetyIntelligence(pos));
             }
+            _triggerEmergencyScanIfNeeded();
           },
           onError: (_) {
             state = state.copyWith(
@@ -667,8 +715,9 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
             latitude: position.latitude,
             longitude: position.longitude,
             radiusMeters: EmergencyServicesScanService.defaultRadiusMeters,
+            languageCode: _summaryLang,
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 18));
     } catch (_) {
       // Still mark scanned so the card always shows the 1 km services section.
       return NearbyEmergencyServicesSnapshot(

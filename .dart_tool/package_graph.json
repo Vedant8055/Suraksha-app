@@ -8,7 +8,7 @@
       "version": "1.0.0+1",
       "dependencies": [
         "animate_do",
-        "camera",
+        "crypto",
         "cupertino_icons",
         "dio",
         "file_picker",
@@ -16,24 +16,19 @@
         "firebase_core",
         "firebase_messaging",
         "flutter",
-        "flutter_dotenv",
         "flutter_foreground_task",
         "flutter_local_notifications",
         "flutter_localizations",
         "flutter_riverpod",
         "flutter_secure_storage",
-        "flutter_sound",
         "flutter_svg",
-        "flutter_tts",
         "geocoding",
         "geolocator",
-        "glassmorphism",
-        "go_router",
         "google_fonts",
         "google_maps_flutter",
         "image_picker",
         "intl",
-        "lottie",
+        "local_auth",
         "path_provider",
         "permission_handler",
         "record",
@@ -72,6 +67,24 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "crypto",
+      "version": "3.0.7",
+      "dependencies": [
+        "typed_data"
+      ]
+    },
+    {
+      "name": "local_auth",
+      "version": "3.0.2",
+      "dependencies": [
+        "flutter",
+        "local_auth_android",
+        "local_auth_darwin",
+        "local_auth_platform_interface",
+        "local_auth_windows"
       ]
     },
     {
@@ -242,13 +255,6 @@
       ]
     },
     {
-      "name": "glassmorphism",
-      "version": "3.0.0",
-      "dependencies": [
-        "flutter"
-      ]
-    },
-    {
       "name": "intl",
       "version": "0.20.2",
       "dependencies": [
@@ -283,25 +289,6 @@
       ]
     },
     {
-      "name": "lottie",
-      "version": "3.3.3",
-      "dependencies": [
-        "archive",
-        "flutter",
-        "http",
-        "path",
-        "vector_math"
-      ]
-    },
-    {
-      "name": "flutter_tts",
-      "version": "3.8.5",
-      "dependencies": [
-        "flutter",
-        "flutter_web_plugins"
-      ]
-    },
-    {
       "name": "speech_to_text",
       "version": "7.4.0",
       "dependencies": [
@@ -313,31 +300,6 @@
         "speech_to_text_platform_interface",
         "speech_to_text_windows",
         "web"
-      ]
-    },
-    {
-      "name": "flutter_sound",
-      "version": "9.28.0",
-      "dependencies": [
-        "flutter",
-        "flutter_sound_platform_interface",
-        "flutter_sound_web",
-        "logger",
-        "path",
-        "path_provider",
-        "synchronized"
-      ]
-    },
-    {
-      "name": "camera",
-      "version": "0.11.4",
-      "dependencies": [
-        "camera_android_camerax",
-        "camera_avfoundation",
-        "camera_platform_interface",
-        "camera_web",
-        "flutter",
-        "flutter_plugin_android_lifecycle"
       ]
     },
     {
@@ -409,13 +371,6 @@
       ]
     },
     {
-      "name": "flutter_dotenv",
-      "version": "5.2.1",
-      "dependencies": [
-        "flutter"
-      ]
-    },
-    {
       "name": "dio",
       "version": "5.9.2",
       "dependencies": [
@@ -426,17 +381,6 @@
         "meta",
         "mime",
         "path"
-      ]
-    },
-    {
-      "name": "go_router",
-      "version": "14.8.1",
-      "dependencies": [
-        "collection",
-        "flutter",
-        "flutter_web_plugins",
-        "logging",
-        "meta"
       ]
     },
     {
@@ -563,6 +507,49 @@
         "stream_channel",
         "string_scanner",
         "term_glyph"
+      ]
+    },
+    {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
+      ]
+    },
+    {
+      "name": "local_auth_windows",
+      "version": "2.0.1",
+      "dependencies": [
+        "flutter",
+        "local_auth_platform_interface"
+      ]
+    },
+    {
+      "name": "local_auth_platform_interface",
+      "version": "1.1.0",
+      "dependencies": [
+        "flutter",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "local_auth_darwin",
+      "version": "2.0.3",
+      "dependencies": [
+        "flutter",
+        "intl",
+        "local_auth_platform_interface"
+      ]
+    },
+    {
+      "name": "local_auth_android",
+      "version": "2.0.8",
+      "dependencies": [
+        "flutter",
+        "flutter_plugin_android_lifecycle",
+        "intl",
+        "local_auth_platform_interface",
+        "meta"
       ]
     },
     {
@@ -1067,21 +1054,6 @@
       "dependencies": []
     },
     {
-      "name": "crypto",
-      "version": "3.0.7",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
-      "name": "archive",
-      "version": "4.0.9",
-      "dependencies": [
-        "path",
-        "posix"
-      ]
-    },
-    {
       "name": "speech_to_text_windows",
       "version": "1.0.1",
       "dependencies": [
@@ -1103,80 +1075,6 @@
         "flutter",
         "meta",
         "plugin_platform_interface"
-      ]
-    },
-    {
-      "name": "flutter_sound_web",
-      "version": "9.28.0",
-      "dependencies": [
-        "flutter",
-        "flutter_sound_platform_interface",
-        "flutter_web_plugins",
-        "logger",
-        "web"
-      ]
-    },
-    {
-      "name": "flutter_sound_platform_interface",
-      "version": "9.28.0",
-      "dependencies": [
-        "flutter",
-        "logger",
-        "plugin_platform_interface"
-      ]
-    },
-    {
-      "name": "logger",
-      "version": "2.7.0",
-      "dependencies": [
-        "clock",
-        "meta"
-      ]
-    },
-    {
-      "name": "synchronized",
-      "version": "3.4.0+1",
-      "dependencies": []
-    },
-    {
-      "name": "camera_web",
-      "version": "0.3.5+3",
-      "dependencies": [
-        "camera_platform_interface",
-        "flutter",
-        "flutter_web_plugins",
-        "stream_transform",
-        "web"
-      ]
-    },
-    {
-      "name": "camera_platform_interface",
-      "version": "2.13.0",
-      "dependencies": [
-        "cross_file",
-        "flutter",
-        "plugin_platform_interface",
-        "stream_transform"
-      ]
-    },
-    {
-      "name": "camera_avfoundation",
-      "version": "0.9.23+2",
-      "dependencies": [
-        "camera_platform_interface",
-        "flutter",
-        "stream_transform"
-      ]
-    },
-    {
-      "name": "camera_android_camerax",
-      "version": "0.6.30",
-      "dependencies": [
-        "async",
-        "camera_platform_interface",
-        "flutter",
-        "meta",
-        "stream_transform"
       ]
     },
     {
@@ -1647,22 +1545,6 @@
       "name": "args",
       "version": "2.7.0",
       "dependencies": []
-    },
-    {
-      "name": "typed_data",
-      "version": "1.4.0",
-      "dependencies": [
-        "collection"
-      ]
-    },
-    {
-      "name": "posix",
-      "version": "6.5.0",
-      "dependencies": [
-        "ffi",
-        "meta",
-        "path"
-      ]
     },
     {
       "name": "stream_transform",

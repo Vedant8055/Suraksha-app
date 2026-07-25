@@ -1,8 +1,15 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:suraksha_women_safety_app/config/api_config.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_token_storage.dart';
+import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
+
+typedef AuthSessionInvalidatedCallback = void Function();
 
 class AuthInterceptor extends QueuedInterceptor {
   AuthInterceptor({FlutterSecureStorage? storage, Dio? dio})
@@ -11,6 +18,9 @@ class AuthInterceptor extends QueuedInterceptor {
 
   final FlutterSecureStorage _storage;
   final Dio? _dio;
+
+  static AuthSessionInvalidatedCallback? onSessionInvalidated;
+  static VoidCallback? onTokensRefreshed;
 
   static final Dio _refreshDio = Dio(
     BaseOptions(
@@ -21,7 +31,7 @@ class AuthInterceptor extends QueuedInterceptor {
     ),
   );
 
-  static bool _isRefreshing = false;
+  static Completer<bool>? _refreshCompleter;
 
   static bool _isAuthRoute(String path) {
     return path.contains('/auth/login') ||
@@ -71,6 +81,7 @@ class AuthInterceptor extends QueuedInterceptor {
     final refreshed = await _refreshTokens();
     if (!refreshed) {
       await AuthTokenStorage.clear();
+      onSessionInvalidated?.call();
       handler.next(err);
       return;
     }
@@ -98,40 +109,61 @@ class AuthInterceptor extends QueuedInterceptor {
   }
 
   static Future<bool> _refreshTokens() async {
-    if (_isRefreshing) {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      final token = await AuthTokenStorage.storage.read(
-        key: AuthTokenStorage.tokenKey,
-      );
-      return token != null && token.isNotEmpty;
+    final inFlight = _refreshCompleter;
+    if (inFlight != null) {
+      return inFlight.future;
     }
 
-    _isRefreshing = true;
+    final completer = Completer<bool>();
+    _refreshCompleter = completer;
+
     try {
       final refreshToken = await AuthTokenStorage.storage.read(
         key: AuthTokenStorage.refreshTokenKey,
       );
-      if (refreshToken == null || refreshToken.isEmpty) return false;
+      if (refreshToken == null || refreshToken.isEmpty) {
+        completer.complete(false);
+        return false;
+      }
 
-      _refreshDio.options.baseUrl = ApiConfig.preferredBaseUrl;
+      _refreshDio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
       final response = await _refreshDio.post(
         ApiConstants.refresh,
         data: {'refreshToken': refreshToken},
       );
-      final data = response.data as Map<String, dynamic>;
+      final raw = response.data;
+      if (raw is! Map) {
+        completer.complete(false);
+        return false;
+      }
+      final data = Map<String, dynamic>.from(raw);
       final access = data['token']?.toString() ?? '';
       final nextRefresh = data['refreshToken']?.toString();
-      if (access.isEmpty) return false;
+      if (access.isEmpty) {
+        completer.complete(false);
+        return false;
+      }
 
       await AuthTokenStorage.saveTokens(
         access: access,
         refresh: nextRefresh ?? refreshToken,
       );
+      onTokensRefreshed?.call();
+      completer.complete(true);
       return true;
-    } catch (_) {
+    } catch (error, stack) {
+      developer.log(
+        'Token refresh failed',
+        name: 'AuthInterceptor',
+        error: error,
+        stackTrace: stack,
+      );
+      completer.complete(false);
       return false;
     } finally {
-      _isRefreshing = false;
+      if (identical(_refreshCompleter, completer)) {
+        _refreshCompleter = null;
+      }
     }
   }
 

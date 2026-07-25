@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Suraksha Women Safety App</string>
+	<key>GoogleMapsAPIKey</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -34,6 +36,8 @@
 	<string>Suraksha listens for screams and distress phrases like help or bachao to trigger SOS when you need help.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Suraksha uses offline speech recognition to detect distress phrases and help keep you safe.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Suraksha uses Face ID to unlock your Medical Health Vault securely.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

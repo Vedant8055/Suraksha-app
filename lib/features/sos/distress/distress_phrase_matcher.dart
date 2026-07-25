@@ -19,6 +19,22 @@ class DistressPhraseMatcher {
       .toSet()
       .toList(growable: false);
 
+  /// Single-word phrases that must match as whole words (not substrings).
+  static const _boundaryOnlyPhrases = {
+    'help',
+    'stop',
+    'police',
+    'bachao',
+    'madad',
+    'vachva',
+    'vachava',
+    'madat',
+    'बचाओ',
+    'मदद',
+    'वाचवा',
+    'मदत',
+  };
+
   static DistressMatchResult match(String rawText) {
     final normalized = _normalize(rawText);
     if (normalized.isEmpty) {
@@ -26,7 +42,7 @@ class DistressPhraseMatcher {
     }
 
     for (final phrase in _normalizedPhrases) {
-      if (normalized == phrase || normalized.contains(phrase)) {
+      if (_matchesPhrase(normalized, phrase)) {
         return DistressMatchResult(
           matched: true,
           phrase: phrase,
@@ -35,10 +51,10 @@ class DistressPhraseMatcher {
       }
     }
 
-    // Fuzzy: all words of a multi-word phrase appear in order
+    // Multi-word: all words present regardless of order (vachva mala ↔ mala vachva).
     for (final phrase in _normalizedPhrases) {
       if (!phrase.contains(' ')) continue;
-      if (_containsWordsInOrder(normalized, phrase.split(' '))) {
+      if (_containsAllWords(normalized, phrase.split(' '))) {
         return DistressMatchResult(
           matched: true,
           phrase: phrase,
@@ -50,17 +66,59 @@ class DistressPhraseMatcher {
     return DistressMatchResult(matched: false, normalizedText: normalized);
   }
 
+  static bool _matchesPhrase(String normalized, String phrase) {
+    if (normalized == phrase) return true;
+
+    if (_boundaryOnlyPhrases.contains(phrase)) {
+      return _hasWholeWord(normalized, phrase);
+    }
+
+    if (normalized.contains(phrase)) return true;
+
+    if (phrase.contains(' ')) {
+      return _containsWordsInOrder(normalized, phrase.split(' '));
+    }
+
+    return _hasWholeWord(normalized, phrase);
+  }
+
+  static bool _hasWholeWord(String haystack, String word) {
+    final pattern = RegExp(
+      '(?:^|\\s)${RegExp.escape(word)}(?:\\s|\$)',
+      unicode: true,
+    );
+    return pattern.hasMatch(haystack);
+  }
+
   static String _normalize(String input) {
     var text = input.toLowerCase().trim();
     text = text.replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), ' ');
     text = text.replaceAll(RegExp(r'\s+'), ' ');
-    // Common STT mis-hearings
-    text = text
-        .replaceAll('help mi', 'help me')
-        .replaceAll('bachao muje', 'bachao mujhe')
-        .replaceAll('mujhe bachao', 'mujhe bachao')
-        .replaceAll('mala vachava', 'mala vachva')
-        .replaceAll('mala sodaa', 'mala soda');
+
+    const corrections = <String, String>{
+      'help mi': 'help me',
+      'halp me': 'help me',
+      'halp': 'help',
+      'bachao muje': 'bachao mujhe',
+      'bachao mujeh': 'bachao mujhe',
+      'muje bachao': 'mujhe bachao',
+      'mujeh bachao': 'mujhe bachao',
+      'mujhe bachao': 'mujhe bachao',
+      'mala vachava': 'mala vachva',
+      'vachava mala': 'vachva mala',
+      'vachva mla': 'vachva mala',
+      'mala vachva': 'mala vachva',
+      'mala sodaa': 'mala soda',
+      'madad kro': 'madad karo',
+      'madat kra': 'madat kara',
+      'bachaw': 'bachao',
+      'bachao mujheh': 'bachao mujhe',
+    };
+
+    for (final entry in corrections.entries) {
+      text = text.replaceAll(entry.key, entry.value);
+    }
+
     return text.trim();
   }
 
@@ -72,5 +130,11 @@ class DistressPhraseMatcher {
       index = found + word.length;
     }
     return true;
+  }
+
+  static bool _containsAllWords(String haystack, List<String> needles) {
+    if (needles.length < 2) return false;
+    final words = haystack.split(' ').where((w) => w.isNotEmpty).toSet();
+    return needles.every(words.contains);
   }
 }

@@ -6,7 +6,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:suraksha_women_safety_app/core/notifications/local_alert_service.dart';
+import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
 import 'package:suraksha_women_safety_app/features/dashboard/safety_monitor_provider.dart';
+import 'package:suraksha_women_safety_app/features/dashboard/safety_verdict_helper.dart';
+import 'package:suraksha_women_safety_app/features/sos/sos_provider.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
 
 final routeSafetyProvider =
@@ -244,6 +247,10 @@ class RouteSafetyAnalyzer {
 
   const RouteSafetyAnalyzer();
 
+  /// Same night window as dashboard safety verdict: 19:00–07:00 local.
+  static bool isNightTime([DateTime? at]) =>
+      SafetyVerdictHelper.isNightTime(at);
+
   RouteSafetyAssessment assess({
     required Position position,
     required List<RoutePoint> learnedRoute,
@@ -266,7 +273,7 @@ class RouteSafetyAnalyzer {
     final riskFactors = <String>[];
     var score = areaSafetyScore.clamp(0, 100);
 
-    if (_isNight(currentTime)) {
+    if (isNightTime(currentTime)) {
       score -= 15;
       riskFactors.add('Night travel');
     }
@@ -398,8 +405,6 @@ class RouteSafetyAnalyzer {
     return total / points.length;
   }
 
-  bool _isNight(DateTime time) => time.hour >= 21 || time.hour < 6;
-
   double _distanceToSegmentMeters({
     required double latitude,
     required double longitude,
@@ -468,14 +473,17 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
   RouteSafetyNotifier(this._ref) : super(const RouteSafetyState());
 
   static const defaultSafetyCheckSeconds = 60;
-  static const _prefsKey = 'route_safety_learned_points_v2';
-  static const _legacyPrefsKey = 'route_safety_learned_points_v1';
-  static const _currentTripPrefsKey = 'route_safety_current_trip_v1';
+  static const _prefsKeyPrefix = 'route_safety_learned_points_v2';
+  static const _legacyGlobalPrefsKey = 'route_safety_learned_points_v2';
+  static const _legacyFlatPrefsKey = 'route_safety_learned_points_v1';
+  static const _currentTripPrefsKeyPrefix = 'route_safety_current_trip_v1';
+  static const _legacyCurrentTripPrefsKey = 'route_safety_current_trip_v1';
   static const _maxStoredTrips = 24;
   static const _maxPointsPerTrip = 180;
   static const _minTripPoints = 5;
-  static const _minTripsForRoutine = 1;
-  static const _minTripsForStrongRoutine = 2;
+  /// At least two completed trips before a path becomes a learned routine.
+  static const _minTripsForRoutine = 2;
+  static const _minTripsForStrongRoutine = 3;
   static const _maxTripGap = Duration(minutes: 12);
   static const _minTripDuration = Duration(minutes: 2);
   static const _tripBreakDistanceMeters = 1500.0;
@@ -495,12 +503,82 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
   bool _started = false;
   bool _loading = false;
   bool _profilesDirty = true;
+  bool _escalationInFlight = false;
   int _deviationStreak = 0;
   RoutePoint? _acknowledgedDeviationPoint;
+  String? _userId;
+
+  String get _prefsKey =>
+      (_userId == null || _userId!.isEmpty)
+          ? _legacyGlobalPrefsKey
+          : '${_prefsKeyPrefix}_$_userId';
+
+  String get _currentTripPrefsKey =>
+      (_userId == null || _userId!.isEmpty)
+          ? _legacyCurrentTripPrefsKey
+          : '${_currentTripPrefsKeyPrefix}_$_userId';
+
+  Future<void> bindUser(String userId) async {
+    final normalized = userId.trim();
+    if (normalized.isEmpty) return;
+    if (_userId == normalized && _started) {
+      await resumeIfEnabled();
+      return;
+    }
+
+    _safetyCountdownTimer?.cancel();
+    _safetyCountdownTimer = null;
+    _completeCurrentTripIfPossible(force: true);
+    _learnedTrips.clear();
+    _routineProfiles.clear();
+    _currentTripPoints.clear();
+    _activeMapRoute.clear();
+    _deviationStreak = 0;
+    _acknowledgedDeviationPoint = null;
+    _profilesDirty = true;
+    _userId = normalized;
+    _started = false;
+    state = const RouteSafetyState(
+      statusMessage: 'statusLearningTravelRoutines',
+    );
+    await start();
+  }
+
+  Future<void> resetForLogout() async {
+    _safetyCountdownTimer?.cancel();
+    _safetyCountdownTimer = null;
+    _monitorSubscription?.close();
+    _monitorSubscription = null;
+    _completeCurrentTripIfPossible(force: false);
+    if (_userId != null && _userId!.isNotEmpty) {
+      await _saveLearnedRoute();
+      await _clearCurrentTripDraft();
+    }
+    _learnedTrips.clear();
+    _routineProfiles.clear();
+    _currentTripPoints.clear();
+    _activeMapRoute.clear();
+    _deviationStreak = 0;
+    _acknowledgedDeviationPoint = null;
+    _profilesDirty = true;
+    _started = false;
+    _loading = false;
+    _escalationInFlight = false;
+    _userId = null;
+    state = const RouteSafetyState();
+  }
 
   Future<void> start() async {
     if (_started && _monitorSubscription != null) return;
     if (_loading) return;
+
+    final authUserId = _ref.read(authProvider).user?.id.trim();
+    if (authUserId != null &&
+        authUserId.isNotEmpty &&
+        _userId != authUserId) {
+      _userId = authUserId;
+    }
+
     _loading = true;
     await _loadLearnedRoute();
     await _loadCurrentTripDraft();
@@ -584,6 +662,36 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
     );
   }
 
+  /// Manual "Need help" from the route-guard dialog — triggers SOS immediately.
+  Future<void> requestEmergencyHelp() async {
+    await _escalateToSos(reasonStatus: 'statusRouteGuardHelpRequested');
+  }
+
+  Future<void> _escalateToSos({required String reasonStatus}) async {
+    if (_escalationInFlight) return;
+    _escalationInFlight = true;
+    try {
+      _safetyCountdownTimer?.cancel();
+      _safetyCountdownTimer = null;
+      _deviationStreak = 0;
+      await LocalAlertService.instance.cancelRouteDeviationAlert();
+      state = state.copyWith(
+        pendingSafetyCheck: false,
+        countdownSeconds: 0,
+        clearAlertStartedAt: true,
+        statusMessage: reasonStatus,
+      );
+
+      final fallback = state.lastPosition;
+      final sos = _ref.read(sosProvider.notifier);
+      if (!sos.state.isActive) {
+        await sos.triggerSOS(fallbackPosition: fallback);
+      }
+    } finally {
+      _escalationInFlight = false;
+    }
+  }
+
   Future<void> resetLearnedRoute() async {
     _learnedTrips.clear();
     _routineProfiles.clear();
@@ -594,7 +702,8 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
     _acknowledgedDeviationPoint = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefsKey);
-    await prefs.remove(_legacyPrefsKey);
+    await prefs.remove(_legacyGlobalPrefsKey);
+    await prefs.remove(_legacyFlatPrefsKey);
     await _clearCurrentTripDraft();
     _safetyCountdownTimer?.cancel();
     state = const RouteSafetyState(
@@ -1043,13 +1152,26 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
   Future<void> _loadCurrentTripDraft() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_currentTripPrefsKey);
+      var raw = prefs.getString(_currentTripPrefsKey);
+      if ((raw == null || raw.isEmpty) &&
+          _userId != null &&
+          _userId!.isNotEmpty) {
+        raw = prefs.getString(_legacyCurrentTripPrefsKey);
+        if (raw != null && raw.isNotEmpty) {
+          await prefs.setString(_currentTripPrefsKey, raw);
+          await prefs.remove(_legacyCurrentTripPrefsKey);
+        }
+      }
       if (raw == null || raw.isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! List) return;
       final points = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(RoutePoint.fromJson)
+          .whereType<Map>()
+          .map(
+            (item) => RoutePoint.fromJson(
+              item.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
           .toList(growable: false);
       if (points.isEmpty) return;
       final last = points.last;
@@ -1095,14 +1217,10 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
       if (nextSeconds <= 0) {
         timer.cancel();
         _safetyCountdownTimer = null;
-        _deviationStreak = 0;
-        state = state.copyWith(
-          pendingSafetyCheck: false,
-          countdownSeconds: 0,
-          clearAlertStartedAt: true,
-          statusMessage: 'statusSafetyCheckEnded',
+        // Unconfirmed deviation → escalate to SOS instead of silently ending.
+        unawaited(
+          _escalateToSos(reasonStatus: 'statusRouteGuardEscalated'),
         );
-        unawaited(LocalAlertService.instance.cancelRouteDeviationAlert());
         return;
       }
 
@@ -1113,13 +1231,28 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
   Future<void> _loadLearnedRoute() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_prefsKey);
+      var raw = prefs.getString(_prefsKey);
+      // Migrate unscoped legacy data into the signed-in user's store once.
+      if ((raw == null || raw.isEmpty) &&
+          _userId != null &&
+          _userId!.isNotEmpty) {
+        raw = prefs.getString(_legacyGlobalPrefsKey);
+        if (raw != null && raw.isNotEmpty) {
+          await prefs.setString(_prefsKey, raw);
+          await prefs.remove(_legacyGlobalPrefsKey);
+        }
+      }
+
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic>) {
+        if (decoded is Map) {
           final trips = (decoded['trips'] as List<dynamic>? ?? const [])
-              .whereType<Map<String, dynamic>>()
-              .map(LearnedTrip.fromJson)
+              .whereType<Map>()
+              .map(
+                (item) => LearnedTrip.fromJson(
+                  item.map((key, value) => MapEntry(key.toString(), value)),
+                ),
+              )
               .where((trip) => trip.points.length >= _minTripPoints)
               .take(_maxStoredTrips)
               .toList(growable: false);
@@ -1146,7 +1279,7 @@ class RouteSafetyNotifier extends StateNotifier<RouteSafetyState> {
   }
 
   Future<void> _loadLegacyRoute(SharedPreferences prefs) async {
-    final raw = prefs.getString(_legacyPrefsKey);
+    final raw = prefs.getString(_legacyFlatPrefsKey);
     if (raw == null || raw.isEmpty) return;
     final decoded = jsonDecode(raw);
     if (decoded is! List) return;

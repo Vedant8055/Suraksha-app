@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 
 enum AppLanguage { english, hindi, marathi }
 
@@ -42,6 +43,7 @@ extension AppLanguageX on AppLanguage {
 
 class AppLocaleNotifier extends StateNotifier<Locale> {
   AppLocaleNotifier() : super(const Locale('en')) {
+    cacheAppLocale(const Locale('en'));
     _loadLocale();
   }
 
@@ -53,10 +55,12 @@ class AppLocaleNotifier extends StateNotifier<Locale> {
     if (code == null || code.isEmpty) return;
     final normalizedCode = _normalizeLanguageCode(code);
     state = Locale(normalizedCode);
+    cacheAppLocale(state);
   }
 
   Future<void> setLanguage(AppLanguage language) async {
     state = language.locale;
+    cacheAppLocale(state);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_localeKey, language.code);
   }

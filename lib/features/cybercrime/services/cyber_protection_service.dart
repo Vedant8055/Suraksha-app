@@ -2,9 +2,11 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
 import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/models/cybercrime_models.dart';
+import 'package:suraksha_women_safety_app/features/cybercrime/utils/cyber_evidence_validation.dart';
 
 class CyberProtectionService {
   final Dio _dio = DioClient().dio;
@@ -127,7 +129,8 @@ class CyberProtectionService {
       ApiConstants.cyberEvidence,
       queryParameters: {
         if (category != null && category != 'All') 'category': category,
-        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (search != null && search.trim().isNotEmpty)
+          'search': CyberEvidenceValidation.sanitizeSearch(search),
         if (reportId != null && reportId.isNotEmpty) 'reportId': reportId,
         if (linked != null && linked.isNotEmpty) 'linked': linked,
       },
@@ -147,7 +150,12 @@ class CyberProtectionService {
     required List<String> tags,
     required bool privateMode,
     String? reportId,
+    CancelToken? cancelToken,
+    void Function(int sent, int total)? onSendProgress,
   }) async {
+    if (!FeatureFlags.cyberEvidenceUpload) {
+      throw StateError('Cyber evidence upload is disabled');
+    }
     final form = FormData.fromMap({
       'title': title,
       'category': category,
@@ -156,7 +164,12 @@ class CyberProtectionService {
       if (reportId != null && reportId.isNotEmpty) 'reportId': reportId,
       'file': await MultipartFile.fromFile(file.path, filename: file.name),
     });
-    await _dio.post(ApiConstants.cyberEvidenceUpload, data: form);
+    await _dio.post(
+      ApiConstants.cyberEvidenceUpload,
+      data: form,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+    );
   }
 
   Future<void> linkEvidenceToReport({

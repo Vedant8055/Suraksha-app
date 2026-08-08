@@ -126,7 +126,7 @@ class _HubHeader extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF1D4ED8).withOpacity(0.35),
+            color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),
@@ -138,7 +138,7 @@ class _HubHeader extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
+              color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
@@ -165,7 +165,7 @@ class _HubHeader extends StatelessWidget {
                 Text(
                   l10n.t('cyberLawHubSubtitle'),
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.85),
+                    color: Colors.white.withValues(alpha: 0.85),
                     fontSize: 12.5,
                     height: 1.4,
                   ),
@@ -207,10 +207,13 @@ class _TopicCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           color: isDark ? const Color(0xFF1A2536) : Colors.white,
-          border: Border.all(color: topic.color.withOpacity(0.22), width: 1.5),
+          border: Border.all(
+            color: topic.color.withValues(alpha: 0.22),
+            width: 1.5,
+          ),
           boxShadow: [
             BoxShadow(
-              color: topic.color.withOpacity(0.12),
+              color: topic.color.withValues(alpha: 0.12),
               blurRadius: 14,
               offset: const Offset(0, 4),
             ),
@@ -224,7 +227,7 @@ class _TopicCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: topic.color.withOpacity(0.13),
+                color: topic.color.withValues(alpha: 0.13),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: Icon(topic.icon, color: topic.color, size: 24),
@@ -247,7 +250,7 @@ class _TopicCard extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: topic.color.withOpacity(0.10),
+                color: topic.color.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
@@ -284,12 +287,12 @@ class _HelplineBanner extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         color: isDark ? const Color(0xFF1A2536) : Colors.white,
         border: Border.all(
-          color: const Color(0xFF3B82F6).withOpacity(0.25),
+          color: const Color(0xFF3B82F6).withValues(alpha: 0.25),
           width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF3B82F6).withOpacity(0.08),
+            color: const Color(0xFF3B82F6).withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -301,7 +304,7 @@ class _HelplineBanner extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF3B82F6).withOpacity(0.12),
+              color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
@@ -403,7 +406,10 @@ class CyberLawDetailPage extends StatelessWidget {
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [topic.color, topic.color.withOpacity(0.65)],
+                        colors: [
+                          topic.color,
+                          topic.color.withValues(alpha: 0.65),
+                        ],
                       ),
                     ),
                   ),
@@ -413,7 +419,7 @@ class CyberLawDetailPage extends StatelessWidget {
                     child: Icon(
                       topic.icon,
                       size: 130,
-                      color: Colors.white.withOpacity(0.10),
+                      color: Colors.white.withValues(alpha: 0.10),
                     ),
                   ),
                 ],
@@ -528,9 +534,9 @@ class _Badge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.30), width: 1),
+        border: Border.all(color: color.withValues(alpha: 0.30), width: 1),
       ),
       child: Text(
         label,
@@ -566,10 +572,10 @@ class _SectionCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         color: isDark ? const Color(0xFF1A2536) : Colors.white,
-        border: Border.all(color: color.withOpacity(0.18), width: 1.2),
+        border: Border.all(color: color.withValues(alpha: 0.18), width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.06),
+            color: color.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -585,7 +591,7 @@ class _SectionCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(icon, color: color, size: 17),

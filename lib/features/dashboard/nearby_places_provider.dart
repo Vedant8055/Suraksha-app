@@ -1,9 +1,13 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:suraksha_women_safety_app/config/app_environment.dart';
+import 'package:suraksha_women_safety_app/constants/api_constants.dart';
+import 'package:suraksha_women_safety_app/core/location/location_permission_service.dart';
+import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
 import 'package:suraksha_women_safety_app/features/dashboard/safety_monitor_provider.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/localization/locale_provider.dart';
 
 class NearbyPlaceItem {
@@ -26,6 +30,19 @@ class NearbyPlaceItem {
     this.isOpenNow,
     this.rating,
   });
+
+  factory NearbyPlaceItem.fromJson(Map<String, dynamic> json) {
+    return NearbyPlaceItem(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? 'Unnamed place').toString(),
+      address: (json['address'] ?? '').toString(),
+      latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+      distanceMeters: (json['distanceMeters'] as num?)?.toDouble() ?? 0,
+      isOpenNow: json['isOpenNow'] as bool?,
+      rating: (json['rating'] as num?)?.toDouble(),
+    );
+  }
 
   String distanceTextFor(String languageCode) {
     if (distanceMeters < 1000) {
@@ -57,6 +74,17 @@ enum NearbyPlaceType {
   petrolPumps,
   washrooms,
   bloodBanks,
+}
+
+extension NearbyPlaceTypeApi on NearbyPlaceType {
+  String get apiCategory => switch (this) {
+        NearbyPlaceType.hospitals => 'hospitals',
+        NearbyPlaceType.policeStations => 'policeStations',
+        NearbyPlaceType.pharmacies => 'pharmacies',
+        NearbyPlaceType.petrolPumps => 'petrolPumps',
+        NearbyPlaceType.washrooms => 'washrooms',
+        NearbyPlaceType.bloodBanks => 'bloodBanks',
+      };
 }
 
 class NearbyPlacesState {
@@ -97,7 +125,10 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
   NearbyPlacesNotifier(this._ref) : super(const NearbyPlacesState());
 
   final Ref _ref;
-  final Dio _dio = Dio();
+  final Dio _dio = DioClient().dio;
+  String? _lastFetchKey;
+  DateTime? _lastFetchAt;
+  static const Duration _cacheTtl = Duration(seconds: 90);
 
   @visibleForTesting
   void debugSetState(NearbyPlacesState newState) {
@@ -115,7 +146,7 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
     fetchNearby(type);
   }
 
-  Future<void> fetchNearby(NearbyPlaceType type) async {
+  Future<void> fetchNearby(NearbyPlaceType type, {bool force = false}) async {
     final monitor = _ref.read(safetyMonitorProvider);
 
     if (!monitor.gpsEnabled || !monitor.permissionGranted) {
@@ -123,11 +154,7 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
         isLoading: false,
         activeType: type,
         places: const [],
-        error: _text(
-          en: 'Live GPS not available. Please keep location ON.',
-          hi: 'लाइव GPS उपलब्ध नहीं है। कृपया लोकेशन ON रखें।',
-          mr: 'लाइव्ह GPS उपलब्ध नाही. कृपया लोकेशन ON ठेवा.',
-        ),
+        error: _l10n('nearbyGpsUnavailable'),
       );
       return;
     }
@@ -138,27 +165,24 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
         isLoading: false,
         activeType: type,
         places: const [],
-        error: _text(
-          en: 'Live GPS not available. Please keep location ON.',
-          hi: 'लाइव GPS उपलब्ध नहीं है। कृपया लोकेशन ON रखें।',
-          mr: 'लाइव्ह GPS उपलब्ध नाही. कृपया लोकेशन ON ठेवा.',
-        ),
+        error: _l10n('nearbyGpsUnavailable'),
       );
       return;
     }
 
-    final apiKey = AppEnvironment.googleMapsApiKey;
-    if (apiKey.isEmpty) {
-      state = state.copyWith(
-        isLoading: false,
-        activeType: type,
-        places: const [],
-        error: _text(
-          en: 'Google Maps API key is missing. Add GOOGLE_MAPS_API_KEY in build config.',
-          hi: 'Google Maps API key उपलब्ध नहीं है। build config में GOOGLE_MAPS_API_KEY जोड़ें।',
-          mr: 'Google Maps API key उपलब्ध नाही. build config मध्ये GOOGLE_MAPS_API_KEY जोडा.',
-        ),
-      );
+    final lang = _googlePlacesLanguageCode();
+    final fetchKey =
+        '${type.apiCategory}_${position.latitude.toStringAsFixed(3)}_'
+        '${position.longitude.toStringAsFixed(3)}_$lang';
+    final now = DateTime.now();
+    if (!force &&
+        state.activeType == type &&
+        state.places.isNotEmpty &&
+        _lastFetchKey == fetchKey &&
+        _lastFetchAt != null &&
+        now.difference(_lastFetchAt!) < _cacheTtl) {
+      // Same location/category/language within the TTL window — reuse the
+      // cached places instead of hitting the network again.
       return;
     }
 
@@ -170,260 +194,75 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
     );
 
     try {
-      final responses = await Future.wait(
-        _queryParametersFor(type, position, apiKey).map(
-          (params) => _dio.get(
-            'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
-            queryParameters: params,
-          ),
+      final response = await _dio.get(
+        ApiConstants.nearbyPlaces,
+        queryParameters: {
+          'lat': position.latitude,
+          'lng': position.longitude,
+          'category': type.apiCategory,
+          'radius': type == NearbyPlaceType.washrooms ? 5000 : 5000,
+          'lang': lang,
+        },
+        options: Options(
+          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 15),
         ),
       );
 
-      final parsedById = <String, NearbyPlaceItem>{};
+      final data = response.data;
+      final list = data is Map && data['places'] is List
+          ? data['places'] as List
+          : data is List
+              ? data
+              : const [];
 
-      for (final response in responses) {
-        final data = response.data;
-        if (data is! Map<String, dynamic>) continue;
-
-        final status = data['status']?.toString() ?? 'UNKNOWN';
-        if (status != 'OK' && status != 'ZERO_RESULTS') {
-          state = state.copyWith(
-            isLoading: false,
-            error: _text(
-              en: 'Places API error: $status',
-              hi: 'Places API त्रुटि: $status',
-              mr: 'Places API त्रुटी: $status',
-            ),
-          );
-          return;
-        }
-
-        final results = data['results'];
-
-        if (results is List) {
-          for (final item in results) {
-            if (item is! Map<String, dynamic>) continue;
-
-            final geometry = item['geometry'];
-            final location = geometry is Map<String, dynamic>
-                ? geometry['location']
-                : null;
-
-            final lat = location is Map<String, dynamic>
-                ? (location['lat'] as num?)?.toDouble()
-                : null;
-            final lng = location is Map<String, dynamic>
-                ? (location['lng'] as num?)?.toDouble()
-                : null;
-
-            if (lat == null || lng == null) continue;
-
-            if (type == NearbyPlaceType.washrooms &&
-                !_isLikelyWashroomPlace(item)) {
-              continue;
-            }
-
-            final openingHours = item['opening_hours'];
-            final ratingNum = item['rating'] as num?;
-            final placeId =
-                item['place_id']?.toString() ??
-                '${item['name']}_${lat.toStringAsFixed(5)}_${lng.toStringAsFixed(5)}';
-            final distance = Geolocator.distanceBetween(
-              position.latitude,
-              position.longitude,
-              lat,
-              lng,
-            );
-
-            parsedById[placeId] = NearbyPlaceItem(
-              id: placeId,
-              name: item['name']?.toString() ?? 'Unnamed place',
-              address: item['vicinity']?.toString() ?? 'Address unavailable',
-              latitude: lat,
-              longitude: lng,
-              distanceMeters: distance,
-              isOpenNow: openingHours is Map<String, dynamic>
-                  ? openingHours['open_now'] as bool?
-                  : null,
-              rating: ratingNum?.toDouble(),
-            );
-          }
-        }
-      }
-
-      var parsed = parsedById.values.toList()
+      final parsed = list
+          .whereType<Map>()
+          .map((raw) => NearbyPlaceItem.fromJson(Map<String, dynamic>.from(raw)))
+          .where((place) => place.latitude != 0 || place.longitude != 0)
+          .toList()
         ..sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
 
-      if (type == NearbyPlaceType.washrooms) {
-        parsed = parsed.where((place) => place.distanceMeters <= 5000).toList();
-      }
-
+      _lastFetchKey = fetchKey;
+      _lastFetchAt = now;
       state = state.copyWith(
         isLoading: false,
         places: parsed,
         clearError: true,
       );
+    } on DioException catch (error) {
+      final code = error.response?.data is Map
+          ? error.response!.data['code']?.toString()
+          : null;
+      state = state.copyWith(
+        isLoading: false,
+        places: const [],
+        error: code == 'MAPS_KEY_MISSING'
+            ? _l10n('nearbyGoogleMapsKeyMissing')
+            : _l10n('nearbyFetchFailed'),
+      );
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
         places: const [],
-        error: _text(
-          en: 'Unable to fetch nearby places right now. Please try again.',
-          hi: 'अभी नज़दीकी स्थान लोड नहीं हो सके। कृपया फिर कोशिश करें।',
-          mr: 'सध्या जवळची ठिकाणे लोड झाली नाहीत. कृपया पुन्हा प्रयत्न करा.',
-        ),
+        error: _l10n('nearbyFetchFailed'),
       );
     }
   }
 
-  List<Map<String, Object>> _queryParametersFor(
-    NearbyPlaceType type,
-    Position position,
-    String apiKey,
-  ) {
-    final base = <String, Object>{
-      'location': '${position.latitude},${position.longitude}',
-      'radius': 5000,
-      'key': apiKey,
-      'language': _googlePlacesLanguageCode(),
-    };
-
-    if (type == NearbyPlaceType.hospitals) {
-      return [
-        {...base, 'type': 'hospital'},
-      ];
-    }
-
-    if (type == NearbyPlaceType.policeStations) {
-      return [
-        {...base, 'type': 'police'},
-      ];
-    }
-
-    if (type == NearbyPlaceType.pharmacies) {
-      const pharmacyKeywords = [
-        'medical store',
-        'medical shop',
-        'medical hall',
-        'chemist',
-        'pharmacy',
-        'drug store',
-        'drugstore',
-        'medicals',
-      ];
-
-      return [
-        {...base, 'type': 'pharmacy'},
-        ...pharmacyKeywords.map((keyword) => {...base, 'keyword': keyword}),
-      ];
-    }
-
-    if (type == NearbyPlaceType.petrolPumps) {
-      const petrolKeywords = [
-        'petrol pump',
-        'petrol bunk',
-        'fuel station',
-        'gas station',
-        'diesel pump',
-        'hp petrol',
-        'indian oil',
-        'bharat petroleum',
-      ];
-
-      return [
-        {...base, 'type': 'gas_station'},
-        ...petrolKeywords.map((keyword) => {...base, 'keyword': keyword}),
-      ];
-    }
-
-    if (type == NearbyPlaceType.bloodBanks) {
-      const bloodBankKeywords = [
-        'blood bank',
-        'blood donation center',
-        'blood centre',
-        'blood storage center',
-        'hospital blood bank',
-      ];
-
-      return bloodBankKeywords
-          .map((keyword) => {...base, 'keyword': keyword})
-          .toList();
-    }
-
-    const washroomKeywords = [
-      'public toilet',
-      'public restroom',
-      'washroom',
-      'restroom',
-      'toilet',
-      'ladies toilet',
-      'gents toilet',
-      'fuel station toilet',
-      'mall washroom',
-    ];
-
-    return [
-      {...base, 'type': 'restroom'},
-      ...washroomKeywords.map((keyword) => {...base, 'keyword': keyword}),
-    ];
-  }
-
-  Future<Position?> _resolveCurrentScanPosition(Position? fallback) async {
-    try {
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
-        timeLimit: const Duration(seconds: 8),
-      );
-    } catch (_) {
-      return fallback ?? Geolocator.getLastKnownPosition();
-    }
-  }
-
-  bool _isLikelyWashroomPlace(Map<String, dynamic> item) {
-    final types = item['types'];
-    if (types is List) {
-      final normalized = types.map((value) => value.toString().toLowerCase());
-      if (normalized.any(
-        (value) =>
-            value.contains('restroom') ||
-            value.contains('toilet') ||
-            value == 'gas_station' ||
-            value == 'shopping_mall' ||
-            value == 'subway_station' ||
-            value == 'bus_station' ||
-            value == 'train_station' ||
-            value == 'hospital' ||
-            value == 'park',
-      )) {
-        return true;
-      }
-    }
-
-    final name = item['name']?.toString().toLowerCase() ?? '';
-    const keywords = [
-      'toilet',
-      'restroom',
-      'washroom',
-      'wc',
-      'lavatory',
-      'loo',
-      'shauchalay',
-      'shulabh',
-    ];
-    return keywords.any(name.contains);
+  Future<Position?> _resolveCurrentScanPosition(Position? fallback) {
+    return LocationPermissionService.resolvePosition(
+      preferred: fallback,
+      accuracy: LocationAccuracy.best,
+      timeLimit: const Duration(seconds: 8),
+    );
   }
 
   String _googlePlacesLanguageCode() {
     return _normalizeLanguageCode(_ref.read(appLocaleProvider).languageCode);
   }
 
-  String _text({required String en, required String hi, required String mr}) {
-    return switch (_normalizeLanguageCode(
-      _ref.read(appLocaleProvider).languageCode,
-    )) {
-      'hi' => hi,
-      'mr' => mr,
-      _ => en,
-    };
+  String _l10n(String key, {Map<String, String> params = const {}}) {
+    return l10nForLocale(_ref.read(appLocaleProvider), key, params: params);
   }
 }

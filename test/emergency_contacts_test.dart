@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:suraksha_women_safety_app/features/profile/emergency_contacts_provider.dart';
@@ -5,14 +6,52 @@ import 'package:suraksha_women_safety_app/features/profile/emergency_contacts_pr
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  const secureChannel = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
+  final secureStore = <String, String>{};
+
   group('EmergencyContactsNotifier', () {
     setUp(() {
       SharedPreferences.setMockInitialValues({});
+      secureStore.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(secureChannel, (call) async {
+        final args = call.arguments;
+        final key = args is Map ? args['key']?.toString() : null;
+        switch (call.method) {
+          case 'read':
+            return key == null ? null : secureStore[key];
+          case 'write':
+            if (key != null) {
+              secureStore[key] = args['value']?.toString() ?? '';
+            }
+            return null;
+          case 'delete':
+            if (key != null) secureStore.remove(key);
+            return null;
+          case 'deleteAll':
+            secureStore.clear();
+            return null;
+          case 'readAll':
+            return Map<String, String>.from(secureStore);
+          case 'containsKey':
+            return key != null && secureStore.containsKey(key);
+          default:
+            return null;
+        }
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(secureChannel, null);
     });
 
     test('saves contacts locally even when backend sync fails', () async {
       final notifier = EmergencyContactsNotifier(syncEnabled: false);
       addTearDown(notifier.dispose);
+      await notifier.bindUser('test-user-1');
 
       await notifier.addContact(
         const EmergencyContact(
@@ -30,6 +69,7 @@ void main() {
 
       final reloaded = EmergencyContactsNotifier(syncEnabled: false);
       addTearDown(reloaded.dispose);
+      await reloaded.bindUser('test-user-1');
       await reloaded.loadContacts();
 
       expect(reloaded.state, hasLength(1));
@@ -52,6 +92,7 @@ void main() {
       () async {
         final notifier = EmergencyContactsNotifier(syncEnabled: false);
         addTearDown(notifier.dispose);
+        await notifier.bindUser('test-user-2');
 
         await notifier.addContact(
           const EmergencyContact(
@@ -62,6 +103,7 @@ void main() {
           ),
         );
         SharedPreferences.setMockInitialValues({});
+        secureStore.clear();
 
         await notifier.loadContacts();
 
@@ -69,5 +111,43 @@ void main() {
         expect(notifier.state.first.name, 'Meera');
       },
     );
+    test('detects Mongo-style server contact ids', () {
+      expect(
+        EmergencyContactsNotifier.isServerContactId('507f1f77bcf86cd799439011'),
+        isTrue,
+      );
+      expect(
+        EmergencyContactsNotifier.isServerContactId('1712345678901'),
+        isFalse,
+      );
+    });
+
+    test('updates local-only contacts without requiring server id', () async {
+      final notifier = EmergencyContactsNotifier(syncEnabled: false);
+      addTearDown(notifier.dispose);
+      await notifier.bindUser('test-user-3');
+
+      await notifier.addContact(
+        const EmergencyContact(
+          id: '',
+          name: 'Riya',
+          phone: '9000011111',
+          relation: 'Friend',
+        ),
+      );
+      final localId = notifier.state.first.id;
+      expect(EmergencyContactsNotifier.isServerContactId(localId), isFalse);
+
+      final updated = await notifier.updateContact(
+        EmergencyContact(
+          id: localId,
+          name: 'Riya Updated',
+          phone: '9000011111',
+          relation: 'Friend',
+        ),
+      );
+      expect(updated, isTrue);
+      expect(notifier.state.first.name, 'Riya Updated');
+    });
   });
 }

@@ -13,6 +13,13 @@ class DistressTaskHandler extends TaskHandler {
 
   @override
   void onReceiveData(Object data) {}
+
+  @override
+  void onNotificationButtonPressed(String id) {
+    if (id == 'stop_monitoring') {
+      FlutterForegroundTask.sendDataToMain({'cmd': 'stop_monitoring'});
+    }
+  }
 }
 
 @pragma('vm:entry-point')

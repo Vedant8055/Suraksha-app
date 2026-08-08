@@ -93,30 +93,54 @@ class LiveSafetyControlsSheet extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _pill(
-                        icon: Icons.shield_rounded,
-                        label: AppLocalizations.of(context)
-                            .t('safetyScoreLabel')
-                            .replaceAll('{score}', '$safetyScore'),
-                      ),
-                      _pill(
-                        icon: Icons.flag_rounded,
-                        label: riskLevel,
-                      ),
-                      _pill(
-                        icon: Icons.verified_rounded,
-                        label: aiConfidence == null
-                            ? AppLocalizations.of(context)
-                                .t('assessmentLimited')
-                            : AppLocalizations.of(context)
-                                .t('aiConfidenceLabel')
-                                .replaceAll('{score}', '$aiConfidence'),
-                      ),
-                    ],
+                  Semantics(
+                    label:
+                        '${AppLocalizations.of(context).t('safetyScoreLabel').replaceAll('{score}', '$safetyScore')}. $riskLevel. ${AppLocalizations.of(context).t('safetyScoreDisclaimer')}',
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _pill(
+                          icon: Icons.shield_rounded,
+                          label: AppLocalizations.of(context)
+                              .t('safetyScoreLabel')
+                              .replaceAll('{score}', '$safetyScore'),
+                        ),
+                        _pill(
+                          icon: Icons.flag_rounded,
+                          label: riskLevel,
+                        ),
+                        _pill(
+                          icon: Icons.verified_rounded,
+                          label: aiConfidence == null
+                              ? AppLocalizations.of(context)
+                                  .t('assessmentLimited')
+                              : AppLocalizations.of(context)
+                                  .t('aiConfidenceLabel')
+                                  .replaceAll('{score}', '$aiConfidence'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    AppLocalizations.of(context).t('safetyScoreDisclaimer'),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    AppLocalizations.of(context).t('mapHeatmapLegend'),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                    ),
                   ),
                   if (upcomingRisk != null) ...[
                     const SizedBox(height: 14),
@@ -133,9 +157,9 @@ class LiveSafetyControlsSheet extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Upcoming elevated risk',
-                            style: TextStyle(
+                          Text(
+                            AppLocalizations.of(context).t('mapUpcomingElevatedRisk'),
+                            style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
                             ),

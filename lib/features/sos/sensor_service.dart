@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/features/sos/sos_provider.dart';
 
 final impactDetectionProvider =
@@ -12,6 +12,8 @@ final impactDetectionProvider =
       unawaited(service.loadPreference());
       return service;
     });
+
+enum ImpactSensitivity { low, medium, high }
 
 class ImpactDetectionState {
   final bool enabled;
@@ -22,6 +24,9 @@ class ImpactDetectionState {
   final DateTime? lastImpactAt;
   final Position? lastImpactPosition;
   final String? error;
+  final ImpactSensitivity sensitivity;
+  final bool testMode;
+  final int falsePositiveCount;
 
   const ImpactDetectionState({
     this.enabled = false,
@@ -32,6 +37,9 @@ class ImpactDetectionState {
     this.lastImpactAt,
     this.lastImpactPosition,
     this.error,
+    this.sensitivity = ImpactSensitivity.medium,
+    this.testMode = false,
+    this.falsePositiveCount = 0,
   });
 
   ImpactDetectionState copyWith({
@@ -44,6 +52,9 @@ class ImpactDetectionState {
     Position? lastImpactPosition,
     bool clearLastImpactPosition = false,
     String? error,
+    ImpactSensitivity? sensitivity,
+    bool? testMode,
+    int? falsePositiveCount,
   }) {
     return ImpactDetectionState(
       enabled: enabled ?? this.enabled,
@@ -56,6 +67,9 @@ class ImpactDetectionState {
           ? null
           : lastImpactPosition ?? this.lastImpactPosition,
       error: error,
+      sensitivity: sensitivity ?? this.sensitivity,
+      testMode: testMode ?? this.testMode,
+      falsePositiveCount: falsePositiveCount ?? this.falsePositiveCount,
     );
   }
 }
@@ -72,7 +86,10 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
   static const String _lastLongitudeKey = 'impact_detection_last_longitude_v1';
   static const String _lastAccuracyKey = 'impact_detection_last_accuracy_v1';
   static const String _lastTimestampKey = 'impact_detection_last_timestamp_v1';
-  static const double impactThreshold = 30.0;
+  static const String _sensitivityKey = 'impact_sensitivity_v1';
+  static const String _testModeKey = 'impact_test_mode_v1';
+  static const String _falsePositiveCountKey =
+      'impact_false_positive_count_v1';
   static const Duration _sosCooldown = Duration(minutes: 2);
   static const int _countdownStartSeconds = 10;
 
@@ -82,7 +99,18 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final enabled = prefs.getBool(_preferenceKey) ?? false;
-      state = state.copyWith(enabled: enabled, error: null);
+      final sensitivity = switch (prefs.getString(_sensitivityKey)) {
+        'low' => ImpactSensitivity.low,
+        'high' => ImpactSensitivity.high,
+        _ => ImpactSensitivity.medium,
+      };
+      state = state.copyWith(
+        enabled: enabled,
+        sensitivity: sensitivity,
+        testMode: prefs.getBool(_testModeKey) ?? false,
+        falsePositiveCount: prefs.getInt(_falsePositiveCountKey) ?? 0,
+        error: null,
+      );
       if (enabled) {
         await startMonitoring();
       }
@@ -90,7 +118,7 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
       state = state.copyWith(
         enabled: false,
         monitoring: false,
-        error: 'Impact detection could not start automatically.',
+        error: l10nSync('impactDetectionEnableFailed'),
       );
     }
   }
@@ -122,6 +150,24 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
     }
   }
 
+  double get _impactThreshold => switch (state.sensitivity) {
+    ImpactSensitivity.low => 38.0,
+    ImpactSensitivity.medium => 30.0,
+    ImpactSensitivity.high => 22.0,
+  };
+
+  Future<void> setSensitivity(ImpactSensitivity sensitivity) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sensitivityKey, sensitivity.name);
+    state = state.copyWith(sensitivity: sensitivity);
+  }
+
+  Future<void> setTestMode(bool testMode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_testModeKey, testMode);
+    state = state.copyWith(testMode: testMode);
+  }
+
   Future<bool> startMonitoring() async {
     if (state.monitoring) return true;
     if (_starting) return false;
@@ -131,8 +177,7 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
       (UserAccelerometerEvent event) {
         final acceleration = event.x.abs() + event.y.abs() + event.z.abs();
 
-        if (acceleration > impactThreshold) {
-          debugPrint('IMPACT DETECTED: $acceleration');
+        if (acceleration > _impactThreshold) {
           final now = DateTime.now();
           state = state.copyWith(
             lastImpactMagnitude: acceleration,
@@ -144,13 +189,15 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
             return;
           }
 
-          unawaited(_startImpactCountdown(acceleration, now));
+          if (!state.testMode) {
+            unawaited(_startImpactCountdown(acceleration, now));
+          }
         }
       },
       onError: (Object error) {
         state = state.copyWith(
           monitoring: false,
-          error: 'Could not monitor impact sensor: $error',
+          error: l10nSync('impactDetectionEnableFailed'),
         );
       },
     );
@@ -244,6 +291,14 @@ class ImpactDetectionService extends StateNotifier<ImpactDetectionState> {
       countdownSeconds: _countdownStartSeconds,
       error: null,
     );
+  }
+
+  Future<void> recordFalsePositive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final count = state.falsePositiveCount + 1;
+    await prefs.setInt(_falsePositiveCountKey, count);
+    cancelPendingImpact();
+    state = state.copyWith(falsePositiveCount: count);
   }
 
   Future<void> stopMonitoring() async {

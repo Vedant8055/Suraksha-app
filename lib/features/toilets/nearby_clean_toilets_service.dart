@@ -122,10 +122,13 @@ class NearbyCleanToilet {
   bool get needsCaution => safetyDisplayStatus == 'Use with caution';
 }
 
+enum ToiletSearchScope { nearby, all }
+
 class NearbyCleanToiletFilters {
   const NearbyCleanToiletFilters({
+    this.scope = ToiletSearchScope.nearby,
     this.radiusMeters = 3000,
-    this.limit = 50,
+    this.limit = 100,
     this.cleanlinessMin = 0,
     this.includeClosed = false,
     this.cleanOnly = false,
@@ -135,6 +138,7 @@ class NearbyCleanToiletFilters {
     this.waterAvailableOnly = false,
   });
 
+  final ToiletSearchScope scope;
   final int radiusMeters;
   final int limit;
   final int cleanlinessMin;
@@ -146,6 +150,7 @@ class NearbyCleanToiletFilters {
   final bool waterAvailableOnly;
 
   NearbyCleanToiletFilters copyWith({
+    ToiletSearchScope? scope,
     int? radiusMeters,
     int? limit,
     int? cleanlinessMin,
@@ -157,6 +162,7 @@ class NearbyCleanToiletFilters {
     bool? waterAvailableOnly,
   }) {
     return NearbyCleanToiletFilters(
+      scope: scope ?? this.scope,
       radiusMeters: radiusMeters ?? this.radiusMeters,
       limit: limit ?? this.limit,
       cleanlinessMin: cleanlinessMin ?? this.cleanlinessMin,
@@ -174,14 +180,19 @@ class NearbyCleanToiletFilters {
     required double longitude,
   }) {
     final includeClosedForQuery = openNowOnly ? false : includeClosed;
-    return {
+    final query = <String, dynamic>{
       'lat': latitude,
       'lng': longitude,
-      'radius': radiusMeters,
       'limit': limit,
       'cleanliness_min': cleanOnly ? 85 : cleanlinessMin,
       'include_closed': includeClosedForQuery,
     };
+    if (scope == ToiletSearchScope.all) {
+      query['scope'] = scope.name;
+    } else {
+      query['radius'] = radiusMeters;
+    }
+    return query;
   }
 }
 
@@ -370,6 +381,13 @@ class NearbyCleanToiletsService {
 
   NearbyCleanToiletException _mapDioError(DioException error) {
     final status = error.response?.statusCode;
+    final data = error.response?.data;
+    if (data is Map && data['message'] != null) {
+      final message = data['message'].toString().trim();
+      if (message.isNotEmpty && status != 401 && status != 403) {
+        return NearbyCleanToiletException(message, statusCode: status);
+      }
+    }
     if (status == 401 || status == 403) {
       return NearbyCleanToiletException(
         'Toilet service is currently unavailable.',
@@ -388,6 +406,13 @@ class NearbyCleanToiletsService {
         error.type == DioExceptionType.receiveTimeout ||
         error.type == DioExceptionType.sendTimeout ||
         error.error is SocketException) {
+      return NearbyCleanToiletException(
+        'Could not reach toilet service right now. Please try again.',
+        statusCode: status,
+      );
+    }
+
+    if (status == null || (status >= 500 && status < 600)) {
       return NearbyCleanToiletException(
         'Could not reach toilet service right now. Please try again.',
         statusCode: status,

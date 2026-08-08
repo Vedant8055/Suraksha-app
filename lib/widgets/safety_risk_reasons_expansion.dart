@@ -238,7 +238,7 @@ class _SafetyIntelligenceDetailsExpansionState
                     child: Text(
                       hasServices
                           ? (widget.emergencyServicesTitle ??
-                                'Emergency services within 1 km')
+                                l10n.t('safetyEmergencyServicesWithin1Km'))
                           : hasReasons
                           ? widget.title
                           : widget.actionTitle,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:suraksha_women_safety_app/core/analytics/toilet_analytics_service.dart';
+import 'package:suraksha_women_safety_app/core/location/location_permission_service.dart';
+import 'package:suraksha_women_safety_app/features/dashboard/safety_monitor_provider.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
 import 'nearby_clean_toilets_service.dart';
 
@@ -51,6 +54,7 @@ class _NearbyCleanToiletsScreenState
   bool _isLoading = true;
   bool _isRefreshing = false;
   bool _fetchSucceeded = false;
+  bool _emptyHintExpanded = false;
   String? _errorMessage;
 
   @override
@@ -83,7 +87,10 @@ class _NearbyCleanToiletsScreenState
     _trackEvent(
       'toilets_nearby_requested',
       details: {
-        'radius_meters': _filters.radiusMeters,
+        'radius_meters': _filters.scope == ToiletSearchScope.nearby
+            ? _filters.radiusMeters
+            : 'all',
+        'scope': _filters.scope.name,
         'cleanliness_min': _filters.cleanOnly ? 85 : _filters.cleanlinessMin,
         'include_closed': _filters.includeClosed,
       },
@@ -117,6 +124,9 @@ class _NearbyCleanToiletsScreenState
           ..clear()
           ..addAll(toilets);
         _selectedToilet = _toilets.isEmpty ? null : _selectedToilet;
+        if (_toilets.isNotEmpty) {
+          _emptyHintExpanded = false;
+        }
         _isLoading = false;
         _isRefreshing = false;
         _fetchSucceeded = true;
@@ -124,7 +134,7 @@ class _NearbyCleanToiletsScreenState
       });
 
       if (_viewMode == ToiletViewMode.map && _toilets.isNotEmpty) {
-        _fitToMarkers();
+        unawaited(_fitToMarkers());
       }
       if (_toilets.isEmpty) {
         _trackEvent('toilet_empty_result');
@@ -160,26 +170,16 @@ class _NearbyCleanToiletsScreenState
       return widget.locationResolver!();
     }
 
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return null;
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      return null;
-    }
-
-    try {
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
-        timeLimit: const Duration(seconds: 10),
-      );
-    } catch (_) {
-      return Geolocator.getLastKnownPosition();
-    }
+    // Prefer the already-granted monitor fix; do not re-prompt for permission.
+    final monitor = ref.read(safetyMonitorProvider);
+    return LocationPermissionService.resolvePosition(
+      mayRequest: false,
+      preferred: (monitor.permissionGranted && monitor.position != null)
+          ? monitor.position
+          : null,
+      accuracy: LocationAccuracy.best,
+      timeLimit: const Duration(seconds: 10),
+    );
   }
 
   void _trackEvent(String event, {Map<String, Object?> details = const {}}) {
@@ -195,7 +195,10 @@ class _NearbyCleanToiletsScreenState
       _trackEvent(
         'toilet_filter_applied',
         details: {
-          'radius_meters': filters.radiusMeters,
+          'radius_meters': filters.scope == ToiletSearchScope.nearby
+              ? filters.radiusMeters
+              : 'all',
+          'scope': filters.scope.name,
           'clean_only': filters.cleanOnly,
           'open_now_only': filters.openNowOnly,
           'female_facility_only': filters.femaleFacilityOnly,
@@ -456,8 +459,12 @@ class _NearbyCleanToiletsScreenState
               ),
               _statChip(
                 context,
-                '${_filters.radiusMeters ~/ 1000} km',
-                l10n.t('toiletsRadiusLabel'),
+                _filters.scope == ToiletSearchScope.all
+                    ? l10n.t('toiletsAllRegisteredShort')
+                    : '${_filters.radiusMeters ~/ 1000} km',
+                _filters.scope == ToiletSearchScope.all
+                    ? l10n.t('toiletsScopeLabel')
+                    : l10n.t('toiletsRadiusLabel'),
               ),
               _statChip(
                 context,
@@ -529,6 +536,12 @@ class _NearbyCleanToiletsScreenState
           _radiusChip(2000),
           const SizedBox(width: 8),
           _radiusChip(5000),
+          const SizedBox(width: 8),
+          _radiusChip(10000),
+          const SizedBox(width: 8),
+          _radiusChip(30000),
+          const SizedBox(width: 8),
+          _allToiletsChip(context),
           const SizedBox(width: 10),
           _toggleChip(
             label: _filters.cleanOnly
@@ -590,13 +603,68 @@ class _NearbyCleanToiletsScreenState
   }
 
   Widget _radiusChip(int meters) {
-    final active = _filters.radiusMeters == meters;
+    final active =
+        _filters.scope == ToiletSearchScope.nearby &&
+        _filters.radiusMeters == meters;
     return ChoiceChip(
       label: Text('${meters ~/ 1000} km'),
       selected: active,
       onSelected: (_) {
-        _refreshWithFilters(filters: _filters.copyWith(radiusMeters: meters));
+        _refreshWithFilters(
+          filters: _filters.copyWith(
+            scope: ToiletSearchScope.nearby,
+            radiusMeters: meters,
+          ),
+        );
       },
+    );
+  }
+
+  Widget _allToiletsChip(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final active = _filters.scope == ToiletSearchScope.all;
+    return ChoiceChip(
+      label: Text(l10n.t('toiletsAllRegistered')),
+      selected: active,
+      onSelected: (_) {
+        _refreshWithFilters(
+          filters: _filters.copyWith(scope: ToiletSearchScope.all),
+        );
+      },
+    );
+  }
+
+  void _increaseSearchRadius() {
+    if (_filters.scope == ToiletSearchScope.all) return;
+
+    final nextScope = switch (_filters.radiusMeters) {
+      1000 => (
+        scope: ToiletSearchScope.nearby,
+        radius: 2000,
+      ),
+      2000 => (
+        scope: ToiletSearchScope.nearby,
+        radius: 5000,
+      ),
+      5000 => (
+        scope: ToiletSearchScope.nearby,
+        radius: 10000,
+      ),
+      10000 => (
+        scope: ToiletSearchScope.nearby,
+        radius: 30000,
+      ),
+      _ => (
+        scope: ToiletSearchScope.all,
+        radius: _filters.radiusMeters,
+      ),
+    };
+
+    _refreshWithFilters(
+      filters: _filters.copyWith(
+        scope: nextScope.scope,
+        radiusMeters: nextScope.radius,
+      ),
     );
   }
 
@@ -614,7 +682,10 @@ class _NearbyCleanToiletsScreenState
 
   Widget _listView(BuildContext context, List<NearbyCleanToilet> toilets) {
     if (toilets.isEmpty) {
-      return _emptyState(context);
+      return _collapsibleEmptyOverlay(
+        context,
+        showOpenMapButton: true,
+      );
     }
 
     return RefreshIndicator(
@@ -637,7 +708,10 @@ class _NearbyCleanToiletsScreenState
 
   Widget _mapView(BuildContext context, List<NearbyCleanToilet> toilets) {
     if (_position == null) {
-      return _emptyState(context);
+      return _collapsibleEmptyOverlay(
+        context,
+        showOpenMapButton: false,
+      );
     }
 
     return Stack(
@@ -671,11 +745,12 @@ class _NearbyCleanToiletsScreenState
           },
         ),
         if (toilets.isEmpty)
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 18,
-            child: _emptyStateCard(context),
+          Positioned.fill(
+            child: _collapsibleEmptyOverlay(
+              context,
+              showOpenMapButton: false,
+              overlay: true,
+            ),
           )
         else
           Positioned(
@@ -757,64 +832,200 @@ class _NearbyCleanToiletsScreenState
     return const Color(0xFF7C3AED);
   }
 
-  Widget _emptyState(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: _emptyStateCard(context),
+  Widget _collapsibleEmptyOverlay(
+    BuildContext context, {
+    required bool showOpenMapButton,
+    bool overlay = false,
+  }) {
+    final toggle = _emptyHintToggleButton(context);
+    final panel = _emptyHintExpanded
+        ? _glassEmptyStateCard(
+            context,
+            showOpenMapButton: showOpenMapButton,
+          )
+        : null;
+
+    if (overlay) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          if (panel != null)
+            Positioned(
+              left: 16,
+              right: 72,
+              bottom: 18,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 280),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.12),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: KeyedSubtree(
+                  key: const ValueKey('empty-hint-panel'),
+                  child: panel,
+                ),
+              ),
+            ),
+          Positioned(right: 16, bottom: 18, child: toggle),
+        ],
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Align(
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.map_outlined,
+            size: 88,
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+          ),
+        ),
+        if (panel != null)
+          Positioned(
+            left: 16,
+            right: 72,
+            bottom: 24,
+            child: panel,
+          ),
+        Positioned(right: 16, bottom: 24, child: toggle),
+      ],
+    );
+  }
+
+  Widget _emptyHintToggleButton(BuildContext context) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    return Material(
+      key: const Key('empty-hint-toggle'),
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _emptyHintExpanded = !_emptyHintExpanded),
+        borderRadius: BorderRadius.circular(18),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: isLight
+                    ? Colors.white.withValues(alpha: 0.62)
+                    : const Color(0xFF101827).withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: isLight ? 0.75 : 0.18),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: isLight ? 0.12 : 0.35),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Icon(
+                _emptyHintExpanded
+                    ? Icons.keyboard_arrow_down_rounded
+                    : Icons.info_outline_rounded,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _emptyStateCard(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.search_off_rounded, size: 40),
-          const SizedBox(height: 10),
-          Text(
-            l10n.t('toiletsNoToiletsInAreaHint'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: [
-              FilledButton(
-                onPressed: () => _refreshWithFilters(
-                  filters: _filters.copyWith(
-                    radiusMeters: _filters.radiusMeters == 1000
-                        ? 2000
-                        : _filters.radiusMeters == 2000
-                        ? 5000
-                        : 5000,
-                  ),
-                ),
-                child: Text(AppLocalizations.of(context).t('toiletsIncreaseRadius')),
-              ),
-              OutlinedButton(
-                onPressed: () => _loadNearbyToilets(refresh: true),
-                child: Text(AppLocalizations.of(context).t('toiletsRefresh')),
-              ),
-              OutlinedButton(
-                onPressed: () => setState(() => _viewMode = ToiletViewMode.map),
-                child: Text(AppLocalizations.of(context).t('toiletsOpenMap')),
+  Widget _glassEmptyStateCard(
+    BuildContext context, {
+    required bool showOpenMapButton,
+  }) {
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: isLight
+                ? Colors.white.withValues(alpha: 0.58)
+                : const Color(0xFF101827).withValues(alpha: 0.48),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: isLight ? 0.72 : 0.16),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isLight ? 0.08 : 0.28),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
-        ],
+          child: _emptyStateContent(
+            context,
+            showOpenMapButton: showOpenMapButton,
+          ),
+        ),
       ),
+    );
+  }
+
+  Widget _emptyStateContent(
+    BuildContext context, {
+    required bool showOpenMapButton,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.search_off_rounded,
+          size: 40,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(height: 10),
+        Text(
+          l10n.t('toiletsNoToiletsInAreaHint'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          alignment: WrapAlignment.center,
+          children: [
+            FilledButton(
+              onPressed: _increaseSearchRadius,
+              child: Text(l10n.t('toiletsIncreaseRadius')),
+            ),
+            OutlinedButton(
+              onPressed: () => _loadNearbyToilets(refresh: true),
+              child: Text(l10n.t('toiletsRefresh')),
+            ),
+            if (showOpenMapButton)
+              OutlinedButton(
+                onPressed: () => setState(() => _viewMode = ToiletViewMode.map),
+                child: Text(l10n.t('toiletsOpenMap')),
+              ),
+          ],
+        ),
+      ],
     );
   }
 

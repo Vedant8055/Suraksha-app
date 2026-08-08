@@ -39,7 +39,12 @@ class PremiumDialogSurface extends StatelessWidget {
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-      child: Container(
+      child: Semantics(
+        scopesRoute: true,
+        namesRoute: true,
+        label: title,
+        explicitChildNodes: true,
+        child: Container(
         constraints: const BoxConstraints(maxWidth: 420),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(30),
@@ -158,17 +163,27 @@ class PremiumDialogSurface extends StatelessWidget {
                   ],
                   if (child != null) ...[const SizedBox(height: 14), child!],
                   const SizedBox(height: 22),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    alignment: WrapAlignment.end,
-                    children: actions,
+                  FocusTraversalGroup(
+                    policy: OrderedTraversalPolicy(),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.end,
+                      children: [
+                        for (var i = 0; i < actions.length; i++)
+                          FocusTraversalOrder(
+                            order: NumericFocusOrder(i + 1.0),
+                            child: actions[i],
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }

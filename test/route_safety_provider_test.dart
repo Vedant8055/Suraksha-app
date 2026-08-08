@@ -31,6 +31,25 @@ void main() {
       expect(assessment.riskFactors, contains('Known daily route'));
     });
 
+    test('uses the same night window as dashboard safety (7 PM–7 AM)', () {
+      expect(
+        RouteSafetyAnalyzer.isNightTime(DateTime(2026, 6, 5, 19)),
+        isTrue,
+      );
+      expect(
+        RouteSafetyAnalyzer.isNightTime(DateTime(2026, 6, 5, 18, 59)),
+        isFalse,
+      );
+      expect(
+        RouteSafetyAnalyzer.isNightTime(DateTime(2026, 6, 5, 6, 59)),
+        isTrue,
+      );
+      expect(
+        RouteSafetyAnalyzer.isNightTime(DateTime(2026, 6, 5, 7)),
+        isFalse,
+      );
+    });
+
     test('detects route deviation and lowers score at night', () {
       final learnedRoute = List.generate(
         RouteSafetyAnalyzer.learnedRouteThreshold,

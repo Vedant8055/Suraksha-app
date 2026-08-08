@@ -30,7 +30,10 @@ class CyberScroll extends StatelessWidget {
       color: isLight ? PremiumCyberTheme.background : null,
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
       ),
     );
   }
@@ -63,12 +66,15 @@ class CyberSectionHeader extends StatelessWidget {
             height: 48,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [color.withOpacity(0.9), color.withOpacity(0.55)],
+                colors: [
+                  color.withValues(alpha: 0.9),
+                  color.withValues(alpha: 0.55),
+                ],
               ),
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: color.withOpacity(0.25),
+                  color: color.withValues(alpha: 0.25),
                   blurRadius: 12,
                   offset: const Offset(0, 6),
                 ),
@@ -94,7 +100,9 @@ class CyberSectionHeader extends StatelessWidget {
                 Text(
                   subtitle,
                   style: TextStyle(
-                    color: isLight ? PremiumCyberTheme.bodyText : Colors.white70,
+                    color: isLight
+                        ? PremiumCyberTheme.bodyText
+                        : Colors.white70,
                     height: 1.35,
                   ),
                 ),
@@ -116,7 +124,8 @@ class CyberCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLight = Theme.of(context).brightness == Brightness.light;
-    final borderColor = accent ?? (isLight ? PremiumCyberTheme.cardBorder : Colors.white24);
+    final borderColor =
+        accent ?? (isLight ? PremiumCyberTheme.cardBorder : Colors.white24);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 16),
@@ -124,18 +133,20 @@ class CyberCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: isLight ? PremiumCyberTheme.cardBackground : AppTheme.cardColor,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor.withOpacity(isLight ? 1 : 0.35)),
+        border: Border.all(
+          color: borderColor.withValues(alpha: isLight ? 1 : 0.35),
+        ),
         boxShadow: isLight
             ? [
                 BoxShadow(
-                  color: const Color(0xFF8A9FBE).withOpacity(0.08),
+                  color: const Color(0xFF8A9FBE).withValues(alpha: 0.08),
                   blurRadius: 24,
                   offset: const Offset(0, 8),
                 ),
               ]
             : [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
+                  color: Colors.black.withValues(alpha: 0.25),
                   blurRadius: 16,
                   offset: const Offset(0, 8),
                 ),
@@ -172,11 +183,15 @@ InputDecoration cyberInputDecoration(BuildContext context, String label) {
   final isLight = Theme.of(context).brightness == Brightness.light;
   return InputDecoration(
     labelText: label,
-    labelStyle: TextStyle(color: isLight ? PremiumCyberTheme.bodyText : Colors.white70),
-    hintStyle: TextStyle(color: isLight ? PremiumCyberTheme.subtleText : Colors.white38),
+    labelStyle: TextStyle(
+      color: isLight ? PremiumCyberTheme.bodyText : Colors.white70,
+    ),
+    hintStyle: TextStyle(
+      color: isLight ? PremiumCyberTheme.subtleText : Colors.white38,
+    ),
     fillColor: isLight
         ? PremiumCyberTheme.background
-        : AppTheme.surfaceSoft.withOpacity(0.72),
+        : AppTheme.surfaceSoft.withValues(alpha: 0.72),
     filled: true,
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
@@ -184,7 +199,9 @@ InputDecoration cyberInputDecoration(BuildContext context, String label) {
     ),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(14),
-      borderSide: BorderSide(color: isLight ? PremiumCyberTheme.cardBorder : Colors.transparent),
+      borderSide: BorderSide(
+        color: isLight ? PremiumCyberTheme.cardBorder : Colors.transparent,
+      ),
     ),
   );
 }
@@ -196,12 +213,14 @@ class CyberTextInput extends StatelessWidget {
     required this.label,
     required this.hint,
     this.onSubmitted,
+    this.maxLength,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
   final ValueChanged<String>? onSubmitted;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -209,8 +228,14 @@ class CyberTextInput extends StatelessWidget {
     return TextField(
       controller: controller,
       onSubmitted: onSubmitted,
-      style: TextStyle(color: isLight ? PremiumCyberTheme.titleText : Colors.white),
-      decoration: cyberInputDecoration(context, label).copyWith(hintText: hint),
+      maxLength: maxLength,
+      style: TextStyle(
+        color: isLight ? PremiumCyberTheme.titleText : Colors.white,
+      ),
+      decoration: cyberInputDecoration(
+        context,
+        label,
+      ).copyWith(hintText: hint, counterText: maxLength == null ? null : ''),
     );
   }
 }
@@ -233,7 +258,9 @@ class CyberMultilineInput extends StatelessWidget {
     return TextField(
       controller: controller,
       maxLines: 5,
-      style: TextStyle(color: isLight ? PremiumCyberTheme.titleText : Colors.white),
+      style: TextStyle(
+        color: isLight ? PremiumCyberTheme.titleText : Colors.white,
+      ),
       decoration: cyberInputDecoration(context, label).copyWith(hintText: hint),
     );
   }
@@ -260,9 +287,12 @@ class CyberAnalysisResultCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
+                  color: color.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Row(
@@ -272,7 +302,10 @@ class CyberAnalysisResultCard extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       '${l10n.t('riskLevel')}: ${l10n.localizeRiskLevelCode(result.riskLevel)}',
-                      style: TextStyle(color: color, fontWeight: FontWeight.w900),
+                      style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ],
                 ),
@@ -293,10 +326,7 @@ class CyberAnalysisResultCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            result.threatSummary
-                .split(' ')
-                .map(l10n.localizeDynamic)
-                .join(' '),
+            result.threatSummary.split(' ').map(l10n.localizeDynamic).join(' '),
             style: TextStyle(
               color: Theme.of(context).brightness == Brightness.light
                   ? PremiumCyberTheme.bodyText
@@ -334,6 +364,32 @@ class CyberAnalysisResultCard extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).brightness == Brightness.light
+                  ? const Color(0xFFFFF7ED)
+                  : const Color(0xFF3F1D0D),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+              ),
+            ),
+            child: Text(
+              l10n.t('cyberAiResultDisclaimer'),
+              style: TextStyle(
+                color: Theme.of(context).brightness == Brightness.light
+                    ? const Color(0xFF9A3412)
+                    : Colors.white70,
+                fontSize: 12,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -341,7 +397,11 @@ class CyberAnalysisResultCard extends StatelessWidget {
 }
 
 class CyberStepProgress extends StatelessWidget {
-  const CyberStepProgress({super.key, required this.current, required this.labels});
+  const CyberStepProgress({
+    super.key,
+    required this.current,
+    required this.labels,
+  });
 
   final int current;
   final List<String> labels;
@@ -400,7 +460,10 @@ class CyberWizardButtons extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     return Row(
       children: [
-        IconButton(onPressed: onBack, icon: const Icon(Icons.arrow_back_rounded)),
+        IconButton(
+          onPressed: onBack,
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
         Expanded(
           child: OutlinedButton.icon(
             onPressed: onDraft,
@@ -445,20 +508,22 @@ class CyberEvidenceCard extends StatelessWidget {
     required this.item,
     required this.onPreview,
     required this.onDownload,
-    required this.onDelete,
+    this.onDelete,
   });
 
   final EvidenceItem item;
   final VoidCallback onPreview;
   final VoidCallback onDownload;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   IconData _iconForType() {
     final type = item.fileType ?? '';
     if (type.startsWith('image/')) return Icons.image_rounded;
     if (type.startsWith('audio/')) return Icons.audiotrack_rounded;
     if (type.contains('pdf')) return Icons.picture_as_pdf_rounded;
-    return item.privateMode ? Icons.visibility_off_rounded : Icons.insert_drive_file_rounded;
+    return item.privateMode
+        ? Icons.visibility_off_rounded
+        : Icons.insert_drive_file_rounded;
   }
 
   @override
@@ -477,13 +542,12 @@ class CyberEvidenceCard extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: isLight ? PremiumCyberTheme.accentSoft : PremiumCyberTheme.accent.withOpacity(0.15),
+                color: isLight
+                    ? PremiumCyberTheme.accentSoft
+                    : PremiumCyberTheme.accent.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(
-                _iconForType(),
-                color: PremiumCyberTheme.accent,
-              ),
+              child: Icon(_iconForType(), color: PremiumCyberTheme.accent),
             ),
             title: Text(
               item.title,
@@ -494,7 +558,9 @@ class CyberEvidenceCard extends StatelessWidget {
               ),
             ),
             subtitle: Text(
-              '${localizedEvidenceCategory(context, item.category)} • ${item.uploadedAt.toLocal()}'.split('.').first,
+              '${localizedEvidenceCategory(context, item.category)} • ${item.uploadedAt.toLocal()}'
+                  .split('.')
+                  .first,
               style: TextStyle(color: metaColor, fontSize: 13),
             ),
           ),
@@ -503,10 +569,20 @@ class CyberEvidenceCard extends StatelessWidget {
             children: [
               if (item.reportId != null && item.reportId!.isNotEmpty)
                 Chip(
-                  avatar: const Icon(Icons.link_rounded, size: 16, color: Color(0xFF3B82F6)),
+                  avatar: const Icon(
+                    Icons.link_rounded,
+                    size: 16,
+                    color: Color(0xFF3B82F6),
+                  ),
                   label: Text(l10n.t('linkedToReport')),
-                  backgroundColor: const Color(0xFF3B82F6).withOpacity(0.12),
-                  labelStyle: const TextStyle(color: Color(0xFF3B82F6), fontSize: 11, fontWeight: FontWeight.w700),
+                  backgroundColor: const Color(
+                    0xFF3B82F6,
+                  ).withValues(alpha: 0.12),
+                  labelStyle: const TextStyle(
+                    color: Color(0xFF3B82F6),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                 ),
               const SizedBox(width: 6),
@@ -514,9 +590,15 @@ class CyberEvidenceCard extends StatelessWidget {
                 Chip(
                   avatar: Icon(Icons.lock_rounded, size: 16, color: metaColor),
                   label: Text(l10n.t('encrypted')),
-                  backgroundColor: isLight ? PremiumCyberTheme.background : Colors.black26,
-                   labelStyle: TextStyle(color: metaColor, fontSize: 11, fontWeight: FontWeight.w700),
-                   padding: const EdgeInsets.symmetric(horizontal: 4),
+                  backgroundColor: isLight
+                      ? PremiumCyberTheme.background
+                      : Colors.black26,
+                  labelStyle: TextStyle(
+                    color: metaColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
                 ),
             ],
           ),
@@ -537,7 +619,9 @@ class CyberEvidenceCard extends StatelessWidget {
                 icon: Icon(Icons.visibility_rounded, size: 18),
                 label: Text(l10n.t('preview')),
                 style: TextButton.styleFrom(
-                  foregroundColor: isLight ? PremiumCyberTheme.bodyText : Colors.white70,
+                  foregroundColor: isLight
+                      ? PremiumCyberTheme.bodyText
+                      : Colors.white70,
                 ),
               ),
               const SizedBox(width: 8),
@@ -546,16 +630,22 @@ class CyberEvidenceCard extends StatelessWidget {
                 icon: Icon(Icons.download_rounded, size: 18),
                 label: Text(l10n.t('download')),
                 style: TextButton.styleFrom(
-                  foregroundColor: isLight ? PremiumCyberTheme.bodyText : Colors.white70,
+                  foregroundColor: isLight
+                      ? PremiumCyberTheme.bodyText
+                      : Colors.white70,
                 ),
               ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: onDelete,
-                icon: Icon(Icons.delete_outline_rounded, size: 18),
-                label: Text(l10n.t('delete')),
-                style: TextButton.styleFrom(foregroundColor: PremiumCyberTheme.error),
-              ),
+              if (onDelete != null) ...[
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: onDelete,
+                  icon: Icon(Icons.delete_outline_rounded, size: 18),
+                  label: Text(l10n.t('delete')),
+                  style: TextButton.styleFrom(
+                    foregroundColor: PremiumCyberTheme.error,
+                  ),
+                ),
+              ],
             ],
           ),
         ],
@@ -576,9 +666,11 @@ class CyberWarningBanner extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFE53935).withOpacity(0.12),
+        color: const Color(0xFFE53935).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE53935).withOpacity(0.35)),
+        border: Border.all(
+          color: const Color(0xFFE53935).withValues(alpha: 0.35),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -616,7 +708,9 @@ class CyberEmptyState extends StatelessWidget {
         child: Text(
           text,
           textAlign: TextAlign.center,
-          style: TextStyle(color: isLight ? PremiumCyberTheme.bodyText : Colors.white60),
+          style: TextStyle(
+            color: isLight ? PremiumCyberTheme.bodyText : Colors.white60,
+          ),
         ),
       ),
     );
@@ -645,7 +739,11 @@ class CyberActionButton extends StatelessWidget {
   }
 }
 
-String localizedCategoryChip(BuildContext context, String category, {bool isReport = true}) {
+String localizedCategoryChip(
+  BuildContext context,
+  String category, {
+  bool isReport = true,
+}) {
   if (isReport) return localizedReportCategory(context, category);
   return localizedEvidenceCategory(context, category);
 }
@@ -654,4 +752,5 @@ List<String> get reportCategoryValues => CybercrimeConstants.reportCategories;
 
 List<String> get evidenceFilterValues => CybercrimeConstants.evidenceCategories;
 
-List<String> get evidenceUploadValues => CybercrimeConstants.evidenceUploadCategories;
+List<String> get evidenceUploadValues =>
+    CybercrimeConstants.evidenceUploadCategories;

@@ -1,16 +1,27 @@
 {
-  "bias": -0.35,
+  "bias": -0.42,
   "weights": {
-    "rms": 2.4,
-    "peakRatio": 1.8,
-    "highBandEnergy": 2.1,
-    "zcr": 0.6,
-    "sustainedMs": 0.0012,
-    "pitchScore": 1.4
+    "rms": 2.1,
+    "peakRatio": 1.4,
+    "highBandEnergy": 2.4,
+    "zcr": 1.1,
+    "sustainedMs": 0.0014,
+    "pitchScore": 1.8
   },
   "thresholds": {
-    "low": 0.62,
-    "medium": 0.54,
-    "high": 0.46
+    "low": 0.64,
+    "medium": 0.56,
+    "high": 0.48
+  },
+  "guards": {
+    "minHighBand": 0.22,
+    "minPitchScore": 0.14,
+    "minZcr": 0.028,
+    "maxFlatPeakRatio": 0.92
+  },
+  "minSustainedMs": {
+    "low": 550,
+    "medium": 480,
+    "high": 400
   }
 }

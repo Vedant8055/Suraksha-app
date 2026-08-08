@@ -21,6 +21,8 @@ class OfflineSpeechEngine {
   bool _listening = false;
   bool _testMode = false;
   int _localeIndex = 0;
+  List<String> _preferredLocales = DistressPhrases.speechLocales;
+  Duration _burstDuration = const Duration(seconds: 7);
   DistressSpeechCallback? _onResult;
 
   bool get isListening => _listening;
@@ -40,6 +42,16 @@ class OfflineSpeechEngine {
 
   void setTestMode(bool enabled) {
     _testMode = enabled;
+  }
+
+  void setPreferredLocales(List<String> localeIds) {
+    if (localeIds.isEmpty) return;
+    _preferredLocales = localeIds;
+    _localeIndex = 0;
+  }
+
+  void setBurstDuration(Duration duration) {
+    _burstDuration = duration;
   }
 
   Future<void> startListening({
@@ -65,15 +77,24 @@ class OfflineSpeechEngine {
     if (!_initialized || _onResult == null) return;
 
     final locales = await _speech.locales();
-    final preferred = DistressPhrases.speechLocales
-        .where((id) => locales.any((locale) => locale.localeId == id))
-        .toList(growable: false);
-    final localeList = preferred.isNotEmpty
-        ? preferred
-        : locales.map((item) => item.localeId).take(4).toList(growable: false);
-    if (localeList.isEmpty) return;
+    final available = locales.map((item) => item.localeId).toSet();
+    final ordered = <String>[];
+    for (final id in _preferredLocales) {
+      if (available.contains(id) && !ordered.contains(id)) {
+        ordered.add(id);
+      }
+    }
+    for (final id in DistressPhrases.speechLocales) {
+      if (available.contains(id) && !ordered.contains(id)) {
+        ordered.add(id);
+      }
+    }
+    if (ordered.isEmpty) {
+      ordered.addAll(available.take(4));
+    }
+    if (ordered.isEmpty) return;
 
-    final localeId = localeList[_localeIndex % localeList.length];
+    final localeId = ordered[_localeIndex % ordered.length];
     _localeIndex++;
 
     _listening = true;
@@ -81,7 +102,7 @@ class OfflineSpeechEngine {
       onResult: _handleSpeechResult,
       listenOptions: SpeechListenOptions(
         localeId: localeId,
-        listenFor: const Duration(seconds: 25),
+        listenFor: _burstDuration + const Duration(seconds: 3),
         pauseFor: const Duration(seconds: 2),
         partialResults: true,
         cancelOnError: false,

@@ -1,31 +1,43 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:animate_do/animate_do.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:suraksha_women_safety_app/constants/api_constants.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/core/media/profile_photo_provider.dart';
-import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
+import 'package:suraksha_women_safety_app/core/navigation/app_navigator.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
-import 'package:suraksha_women_safety_app/features/dashboard/safety_verdict_helper.dart';
 import 'package:suraksha_women_safety_app/features/dashboard/safety_preferences_provider.dart';
+import 'package:suraksha_women_safety_app/features/notifications/notifications_inbox_screen.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_repository.dart';
+import 'package:suraksha_women_safety_app/features/profile/daily_route_guard_card.dart';
+import 'package:suraksha_women_safety_app/features/profile/emergency_contact_item.dart';
 import 'package:suraksha_women_safety_app/features/profile/emergency_contacts_provider.dart';
+import 'package:suraksha_women_safety_app/features/profile/emergency_contact_guard.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_display_provider.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_hero.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_session_cache.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_format_helpers.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_settings_widgets.dart';
+import 'package:suraksha_women_safety_app/features/profile/account_privacy_screen.dart';
+import 'package:suraksha_women_safety_app/features/profile/signed_in_devices_screen.dart';
+import 'package:suraksha_women_safety_app/features/sentinel_evidence/widgets/sentinel_profile_card.dart';
 import 'package:suraksha_women_safety_app/features/maps/safety_map_screen.dart';
-import 'package:suraksha_women_safety_app/features/routes/route_safety_provider.dart';
+import 'package:suraksha_women_safety_app/features/medical/medical_vault_screen.dart';
 import 'package:suraksha_women_safety_app/features/sos/sensor_service.dart';
 import 'package:suraksha_women_safety_app/features/sos/scream_detection_service.dart';
+import 'package:suraksha_women_safety_app/features/sos/sos_sms_service.dart';
+import 'package:suraksha_women_safety_app/features/sos/distress/distress_foreground_controller.dart';
 import 'package:suraksha_women_safety_app/features/sos/distress/scream_audio_classifier.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
 import 'package:suraksha_women_safety_app/localization/locale_provider.dart';
+import 'package:suraksha_women_safety_app/localization/localized_display_name.dart';
 import 'package:suraksha_women_safety_app/models/user_model.dart';
 import 'package:suraksha_women_safety_app/theme/app_theme.dart';
 import 'package:suraksha_women_safety_app/theme/theme_mode_provider.dart';
-import 'package:suraksha_women_safety_app/widgets/safety_risk_reasons_expansion.dart';
 import 'package:suraksha_women_safety_app/widgets/save_feedback_dialog.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -36,31 +48,13 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  final Dio _dio = DioClient().dio;
-  static const String _localNameKey = 'profile_local_name_v1';
-  static const String _localEmailKey = 'profile_local_email_v1';
-  static const String _localPhoneKey = 'profile_local_phone_v1';
-  static const String _localBloodKey = 'profile_local_blood_v1';
-  static const String _localPhotoPathKey = 'profile_local_photo_path_v1';
+  final _profileRepo = ProfileRepository();
   bool _isSaving = false;
   String? _localName;
   String? _localEmail;
   String? _localPhone;
   String? _localBloodGroup;
   String? _localPhotoPath;
-  String _extractError(Object error) {
-    if (error is DioException) {
-      final data = error.response?.data;
-      if (data is Map<String, dynamic> && data['message'] != null) {
-        return data['message'].toString();
-      }
-      return error.message ?? 'Network request failed';
-    }
-    if (error is ArgumentError) {
-      return error.message?.toString() ?? 'Invalid details.';
-    }
-    return error.toString();
-  }
 
   void _showError(String message) {
     if (!mounted) return;
@@ -133,25 +127,34 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void initState() {
     super.initState();
     Future.microtask(() async {
+      final user = ref.read(authProvider).user;
+      if (user != null && user.id.isNotEmpty) {
+        await ref.read(emergencyContactsProvider.notifier).bindUser(user.id);
+      }
       await _loadLocalProfile();
       await ref.read(emergencyContactsProvider.notifier).loadContacts();
     });
   }
 
   Future<void> _loadLocalProfile() async {
-    final prefs = await SharedPreferences.getInstance();
+    final local = await ProfileSessionCache.readLocalProfile();
+    final user = ref.read(authProvider).user;
     if (!mounted) return;
     setState(() {
-      _localName = prefs.getString(_localNameKey);
-      _localEmail = prefs.getString(_localEmailKey);
-      _localPhone = prefs.getString(_localPhoneKey);
-      _localBloodGroup = prefs.getString(_localBloodKey);
-      _localPhotoPath = prefs.getString(_localPhotoPathKey);
+      _localName = local['name'];
+      _localEmail = local['email'];
+      _localPhone = local['phone'];
+      _localBloodGroup = local['blood'];
+      _localPhotoPath = local['photoPath'];
     });
+    final displayName = (user?.name ?? '').trim().isNotEmpty
+        ? user!.name.trim()
+        : (_localName ?? '');
     unawaited(
-      ref
-          .read(profileDisplayProvider.notifier)
-          .update(name: _localName ?? '', photoPath: _localPhotoPath ?? ''),
+      ref.read(profileDisplayProvider.notifier).update(
+        name: displayName,
+        photoPath: _localPhotoPath ?? '',
+      ),
     );
   }
 
@@ -162,14 +165,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     required String bloodGroup,
     String? localPhotoPath,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_localNameKey, fullName);
-    await prefs.setString(_localEmailKey, email);
-    await prefs.setString(_localPhoneKey, phone);
-    await prefs.setString(_localBloodKey, bloodGroup);
-    if (localPhotoPath != null && localPhotoPath.isNotEmpty) {
-      await prefs.setString(_localPhotoPathKey, localPhotoPath);
-    }
+    await ProfileSessionCache.writeLocalProfile(
+      fullName: fullName,
+      email: email,
+      phone: phone,
+      bloodGroup: bloodGroup,
+      localPhotoPath: localPhotoPath,
+    );
     if (!mounted) return;
     setState(() {
       _localName = fullName;
@@ -192,20 +194,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final l10n = AppLocalizations.of(context);
     final authState = ref.watch(authProvider);
     final user = authState.user;
-    final displayName = (_localName != null && _localName!.trim().isNotEmpty)
+    final currentLocale = ref.watch(appLocaleProvider);
+    final rawDisplayName = (user?.name ?? '').trim().isNotEmpty
+        ? user!.name.trim()
+        : (_localName != null && _localName!.trim().isNotEmpty)
         ? _localName!
-        : (user?.name ?? 'User Name');
-    final displayEmail = (_localEmail != null && _localEmail!.trim().isNotEmpty)
+        : l10n.t('profileUserNamePlaceholder');
+    final displayName = LocalizedDisplayName.forLocale(
+      rawDisplayName,
+      currentLocale,
+    );
+    final displayEmail = (user?.email ?? '').trim().isNotEmpty
+        ? user!.email.trim()
+        : (_localEmail != null && _localEmail!.trim().isNotEmpty)
         ? _localEmail!
-        : (user?.email ?? 'email@example.com');
-    final displayPhone = (_localPhone != null && _localPhone!.trim().isNotEmpty)
+        : l10n.t('profileEmailPlaceholder');
+    final displayPhone = (user?.phone ?? '').trim().isNotEmpty
+        ? user!.phone.trim()
+        : (_localPhone != null && _localPhone!.trim().isNotEmpty)
         ? _localPhone!
-        : (user?.phone ?? l10n.t('notProvided'));
+        : l10n.t('notProvided');
     final contacts = ref.watch(emergencyContactsProvider);
     final impactDetectionState = ref.watch(impactDetectionProvider);
     final screamDetectionState = ref.watch(screamDetectionProvider);
     final themeMode = ref.watch(appThemeModeProvider);
-    final currentLocale = ref.watch(appLocaleProvider);
     final selectedLanguage = AppLanguageX.fromLocale(currentLocale);
     final isDarkMode = themeMode == ThemeMode.dark;
     final isLight = Theme.of(context).brightness == Brightness.light;
@@ -255,20 +267,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildProfileHero(
-                context,
+              ProfileHero(
                 displayName: displayName,
                 displayEmail: displayEmail,
                 profileImage: profileImage,
                 profileText: profileText,
                 profileMuted: profileMuted,
                 isLight: isLight,
+                onPreviewPhoto: profileImage == null
+                    ? null
+                    : () => _showProfilePhotoPreview(profileImage),
                 onEditPhoto: _isSaving ? null : _pickAndUploadPhoto,
                 onEditDetails: _isSaving
                     ? null
                     : () => _showEditProfileDialog(
                         user,
-                        displayName: displayName,
+                        displayName: rawDisplayName,
                         displayEmail: displayEmail,
                         displayPhone: displayPhone == l10n.t('notProvided')
                             ? ''
@@ -276,8 +290,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       ),
               ),
               const SizedBox(height: 14),
-              _buildLanguageSelector(
-                context,
+              ProfileLanguageSelector(
                 selectedLanguage: selectedLanguage,
                 profileText: profileText,
                 profileMuted: profileMuted,
@@ -353,18 +366,64 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ),
                       ),
                       subtitle: Text(
-                        screamDetectionState.monitoring
+                        !FeatureFlags.backgroundMicrophone
+                            ? l10n.t('featureFlagDisabledHint')
+                            : screamDetectionState.monitoring
                             ? l10n.t('microphoneSafetyMonitorActive')
                             : l10n.t('microphoneSafetyMonitorInactive'),
                         style: TextStyle(color: profileMuted),
                       ),
-                      value: screamDetectionState.enabled,
+                      value: FeatureFlags.backgroundMicrophone &&
+                          screamDetectionState.enabled,
                       activeThumbColor: AppTheme.primaryColor,
-                      onChanged: _isSaving
+                      onChanged: !FeatureFlags.backgroundMicrophone || _isSaving
                           ? null
                           : (enabled) => _setScreamDetectionEnabled(enabled),
                     ),
                     if (screamDetectionState.enabled) ...[
+                      if (screamDetectionState.batteryRestricted)
+                        ListTile(
+                          leading: const Icon(
+                            Icons.battery_alert_rounded,
+                            color: Colors.orange,
+                          ),
+                          title: Text(
+                            l10n.t('distressBatteryRestrictedWarning'),
+                            style: TextStyle(
+                              color: profileText,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          trailing: TextButton(
+                            onPressed: () => unawaited(
+                              DistressForegroundController.openBatterySettings(),
+                            ),
+                            child: Text(l10n.t('openSettings')),
+                          ),
+                        ),
+                      if (!screamDetectionState.permissionGranted &&
+                          screamDetectionState.error != null)
+                        ListTile(
+                          leading: const Icon(
+                            Icons.mic_off_rounded,
+                            color: Colors.orange,
+                          ),
+                          title: Text(
+                            screamDetectionState.error!,
+                            style: TextStyle(
+                              color: profileText,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          trailing: TextButton(
+                            onPressed: () => unawaited(
+                              ref
+                                  .read(screamDetectionProvider.notifier)
+                                  .openMicrophoneSettings(),
+                            ),
+                            child: Text(l10n.t('openSettings')),
+                          ),
+                        ),
                       ListTile(
                         leading: const Icon(
                           Icons.tune_rounded,
@@ -430,34 +489,110 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                   .read(screamDetectionProvider.notifier)
                                   .setTestMode(enabled),
                       ),
+                      if (screamDetectionState.falsePositiveCount >= 3)
+                        ListTile(
+                          leading: const Icon(
+                            Icons.tune_rounded,
+                            color: Colors.orange,
+                          ),
+                          title: Text(
+                            l10n.t('distressLowerSensitivityHint'),
+                            style: TextStyle(color: profileMuted),
+                          ),
+                        ),
                     ],
                     const Divider(height: 1),
                     Consumer(
                       builder: (context, ref, _) {
                         final prefs = ref.watch(safetyPreferencesProvider);
-                        return SwitchListTile(
-                          secondary: const Icon(
-                            Icons.notifications_active_outlined,
-                            color: AppTheme.primaryColor,
-                          ),
-                          title: Text(
-                            l10n.t('journeySafetyAlerts'),
-                            style: TextStyle(
-                              color: profileText,
-                              fontWeight: FontWeight.w700,
+                        final notifier =
+                            ref.read(safetyPreferencesProvider.notifier);
+                        Widget tile({
+                          required IconData icon,
+                          required String titleKey,
+                          required String subtitleKey,
+                          required bool value,
+                          required ValueChanged<bool>? onChanged,
+                        }) {
+                          return SwitchListTile(
+                            secondary: Icon(icon, color: AppTheme.primaryColor),
+                            title: Text(
+                              l10n.t(titleKey),
+                              style: TextStyle(
+                                color: profileText,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          subtitle: Text(
-                            l10n.t('journeySafetyAlertsSubtitle'),
-                            style: TextStyle(color: profileMuted),
-                          ),
-                          value: prefs.journeyAlertsEnabled,
-                          activeThumbColor: AppTheme.primaryColor,
-                          onChanged: prefs.loading
-                              ? null
-                              : (enabled) => ref
-                                    .read(safetyPreferencesProvider.notifier)
-                                    .setJourneyAlertsEnabled(enabled),
+                            subtitle: Text(
+                              l10n.t(subtitleKey),
+                              style: TextStyle(color: profileMuted),
+                            ),
+                            value: value,
+                            activeThumbColor: AppTheme.primaryColor,
+                            onChanged: prefs.loading ? null : onChanged,
+                          );
+                        }
+
+                        return Column(
+                          children: [
+                            tile(
+                              icon: Icons.explore_outlined,
+                              titleKey: 'journeySafetyAlerts',
+                              subtitleKey: 'journeySafetyAlertsSubtitle',
+                              value: prefs.journeyAlertsEnabled,
+                              onChanged: notifier.setJourneyAlertsEnabled,
+                            ),
+                            tile(
+                              icon: Icons.crisis_alert_rounded,
+                              titleKey: 'notifPrefSos',
+                              subtitleKey: 'notifPrefSosSubtitle',
+                              value: prefs.sosAlertsEnabled,
+                              onChanged: notifier.setSosAlertsEnabled,
+                            ),
+                            tile(
+                              icon: Icons.alt_route_rounded,
+                              titleKey: 'notifPrefRoute',
+                              subtitleKey: 'notifPrefRouteSubtitle',
+                              value: prefs.routeWarningsEnabled,
+                              onChanged: notifier.setRouteWarningsEnabled,
+                            ),
+                            tile(
+                              icon: Icons.groups_outlined,
+                              titleKey: 'notifPrefCommunity',
+                              subtitleKey: 'notifPrefCommunitySubtitle',
+                              value: prefs.communityAlertsEnabled,
+                              onChanged: notifier.setCommunityAlertsEnabled,
+                            ),
+                            tile(
+                              icon: Icons.alarm_on_outlined,
+                              titleKey: 'notifPrefReminders',
+                              subtitleKey: 'notifPrefRemindersSubtitle',
+                              value: prefs.safetyRemindersEnabled,
+                              onChanged: notifier.setSafetyRemindersEnabled,
+                            ),
+                            ListTile(
+                              leading: const Icon(
+                                Icons.inbox_outlined,
+                                color: AppTheme.primaryColor,
+                              ),
+                              title: Text(
+                                l10n.t('notifInboxTitle'),
+                                style: TextStyle(
+                                  color: profileText,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: Text(
+                                l10n.t('notifInboxOpenSubtitle'),
+                                style: TextStyle(color: profileMuted),
+                              ),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => _pushWithTransition(
+                                context,
+                                const NotificationsInboxScreen(),
+                              ),
+                            ),
+                          ],
                         );
                       },
                     ),
@@ -486,17 +621,94 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ? null
                           : (enabled) => _setImpactDetectionEnabled(enabled),
                     ),
+                    if (impactDetectionState.enabled) ...[
+                      ListTile(
+                        leading: const Icon(
+                          Icons.tune_rounded,
+                          color: AppTheme.primaryColor,
+                        ),
+                        title: Text(
+                          l10n.t('impactSensitivity'),
+                          style: TextStyle(
+                            color: profileText,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        trailing: DropdownButton<ImpactSensitivity>(
+                          value: impactDetectionState.sensitivity,
+                          underline: const SizedBox.shrink(),
+                          items: ImpactSensitivity.values
+                              .map(
+                                (level) => DropdownMenuItem(
+                                  value: level,
+                                  child: Text(
+                                    l10n.t(
+                                      'distressSensitivity_${level.name}',
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: _isSaving
+                              ? null
+                              : (value) {
+                                  if (value == null) return;
+                                  ref
+                                      .read(impactDetectionProvider.notifier)
+                                      .setSensitivity(value);
+                                },
+                        ),
+                      ),
+                      SwitchListTile(
+                        secondary: const Icon(
+                          Icons.science_outlined,
+                          color: AppTheme.primaryColor,
+                        ),
+                        title: Text(
+                          l10n.t('impactTestMode'),
+                          style: TextStyle(
+                            color: profileText,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          l10n.t('impactTestModeSubtitle'),
+                          style: TextStyle(color: profileMuted),
+                        ),
+                        value: impactDetectionState.testMode,
+                        onChanged: _isSaving
+                            ? null
+                            : (enabled) => ref
+                                  .read(impactDetectionProvider.notifier)
+                                  .setTestMode(enabled),
+                      ),
+                    ],
                   ],
                 ),
               ),
               const SizedBox(height: 12),
-              _buildDailyRouteGuardCard(context, ref),
+              ProfileSettingsTile(
+                title: l10n.t('medicalHealthVault'),
+                value: l10n.t('keepEmergencyMedicalInformationOrganized'),
+                icon: Icons.medical_services_rounded,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const MedicalVaultScreen(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              DailyRouteGuardCard(
+                onOpenMap: () =>
+                    _pushWithTransition(context, const SafetyMapScreen()),
+              ),
               const SizedBox(height: 14),
-              _buildProfileItem(
-                context,
-                l10n.t('emergencyContacts'),
-                '${contacts.length} ${l10n.t('contactsSaved')}',
-                Icons.people_rounded,
+              ProfileSettingsTile(
+                title: l10n.t('emergencyContacts'),
+                value: '${contacts.length} ${l10n.t('contactsSaved')}',
+                icon: Icons.people_rounded,
               ),
               const SizedBox(height: 18),
               Align(
@@ -513,7 +725,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ...contacts.map(
                 (c) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
-                  child: _buildContactItem(c),
+                  child: EmergencyContactItem(
+                    contact: c,
+                    enabled: !_isSaving,
+                    onTestSms: () => SOSSmsService().openTestComposer(c),
+                    onMakePrimary: () => ref
+                        .read(emergencyContactsProvider.notifier)
+                        .setPrimary(c.id),
+                    onEdit: () => _showEditContactDialog(c),
+                    onDelete: () => _deleteContact(c.id),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -529,11 +750,37 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _isSaving
-                      ? null
-                      : () async {
-                          await ref.read(authProvider.notifier).logout();
-                        },
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const SignedInDevicesScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.devices_rounded),
+                  label: Text(l10n.t('signedInDevicesTitle')),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AccountPrivacyScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.privacy_tip_outlined),
+                  label: Text(l10n.t('accountPrivacyTitle')),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const SentinelProfileCard(),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await ref.read(authProvider.notifier).logout();
+                  },
                   icon: const Icon(Icons.logout_rounded),
                   label: Text(l10n.t('logoutSession')),
                   style: OutlinedButton.styleFrom(
@@ -550,845 +797,46 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
   }
 
-  Widget _buildProfileHero(
-    BuildContext context, {
-    required String displayName,
-    required String displayEmail,
-    required ImageProvider<Object>? profileImage,
-    required Color profileText,
-    required Color profileMuted,
-    required bool isLight,
-    VoidCallback? onEditPhoto,
-    VoidCallback? onEditDetails,
-  }) {
-    return FadeInDown(
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isLight
-                ? const [
-                    Color(0xFFFFFFFF),
-                    Color(0xFFF2F7FF),
-                    Color(0xFFE7F1FF),
-                  ]
-                : const [
-                    Color(0xFF121B2E),
-                    Color(0xFF0E1727),
-                    Color(0xFF08111D),
-                  ],
-          ),
-          border: Border.all(
-            color: isLight
-                ? const Color(0xFFD9E6F8)
-                : Colors.white.withValues(alpha: 0.08),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isLight ? 0.06 : 0.24),
-              blurRadius: 24,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Stack(
-                  children: [
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: profileImage == null
-                            ? null
-                            : () => _showProfilePhotoPreview(profileImage),
-                        customBorder: const CircleBorder(),
-                        child: CircleAvatar(
-                          radius: 46,
-                          backgroundColor: AppTheme.primaryColor.withValues(
-                            alpha: 0.18,
-                          ),
-                          backgroundImage: profileImage,
-                          child: profileImage == null
-                              ? const Icon(
-                                  Icons.person_rounded,
-                                  size: 52,
-                                  color: AppTheme.primaryColor,
-                                )
-                              : null,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 0,
-                      right: 0,
-                      child: InkWell(
-                        onTap: onEditPhoto,
-                        borderRadius: BorderRadius.circular(999),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: AppTheme.primaryColor,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppTheme.primaryColor.withValues(
-                                  alpha: 0.35,
-                                ),
-                                blurRadius: 14,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.edit_rounded,
-                            size: 18,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        displayName,
-                        style: TextStyle(
-                          color: profileText,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        displayEmail,
-                        style: TextStyle(color: profileMuted, fontSize: 13.5),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        AppLocalizations.of(context).t('profileHeroCta'),
-                        style: TextStyle(
-                          color: profileMuted,
-                          height: 1.35,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: onEditDetails,
-                icon: const Icon(Icons.edit_document),
-                label: Text(
-                  AppLocalizations.of(context).t('editProfileDetails'),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLanguageSelector(
-    BuildContext context, {
-    required AppLanguage selectedLanguage,
-    required Color profileText,
-    required Color profileMuted,
-    required bool isLight,
-    required ValueChanged<AppLanguage?>? onChanged,
-  }) {
-    final l10n = AppLocalizations.of(context);
-    final options = [
-      (AppLanguage.english, l10n.t('english'), Icons.language_rounded),
-      (AppLanguage.hindi, l10n.t('hindi'), Icons.translate_rounded),
-      (AppLanguage.marathi, l10n.t('marathi'), Icons.auto_awesome_rounded),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: isLight ? Colors.white : AppTheme.cardColor,
-        border: Border.all(
-          color: isLight
-              ? const Color(0xFFDCE5F6)
-              : Colors.white.withValues(alpha: 0.08),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isLight ? 0.05 : 0.22),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            l10n.t('languageSelectionTitle'),
-            style: TextStyle(
-              color: profileText,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            l10n.t('contentLanguage'),
-            style: TextStyle(color: profileMuted, fontSize: 12.5),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: options
-                .map(
-                  (option) => Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        right: option.$1 == AppLanguage.marathi ? 0 : 8,
-                      ),
-                      child: _buildLanguageButton(
-                        context,
-                        label: option.$2,
-                        icon: option.$3,
-                        selected: selectedLanguage == option.$1,
-                        isLight: isLight,
-                        onTap: onChanged == null
-                            ? null
-                            : () => onChanged(option.$1),
-                      ),
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLanguageButton(
-    BuildContext context, {
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required bool isLight,
-    required VoidCallback? onTap,
-  }) {
-    final baseColor = selected
-        ? AppTheme.primaryColor
-        : (isLight ? const Color(0xFFF1F5FE) : const Color(0xFF0E1727));
-    final textColor = selected
-        ? Colors.white
-        : (isLight ? const Color(0xFF172235) : Colors.white);
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-          decoration: BoxDecoration(
-            gradient: selected
-                ? const LinearGradient(
-                    colors: [Color(0xFF1D8CF8), Color(0xFF2ED6C5)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: selected ? null : baseColor,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: selected
-                  ? Colors.transparent
-                  : (isLight
-                        ? const Color(0xFFD4E0F3)
-                        : Colors.white.withValues(alpha: 0.08)),
-            ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.26),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.max,
-            children: [
-              Icon(icon, size: 16, color: textColor),
-              const SizedBox(width: 6),
-              Flexible(
-                fit: FlexFit.loose,
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.fade,
-                  style: TextStyle(
-                    color: textColor,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileItem(
-    BuildContext context,
-    String title,
-    String value,
-    IconData icon, {
-    VoidCallback? onTap,
-  }) {
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    final textColor = isLight ? const Color(0xFF172235) : Colors.white;
-    final mutedColor = isLight ? const Color(0xFF5F6F8A) : Colors.white38;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: isLight ? Colors.white : AppTheme.cardColor,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: isLight ? const Color(0xFFDCE5F6) : Colors.transparent,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isLight ? 0.04 : 0.18),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withValues(
-                    alpha: isLight ? 0.10 : 0.18,
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: AppTheme.primaryColor),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(color: mutedColor, fontSize: 12),
-                    ),
-                    Text(
-                      value,
-                      style: TextStyle(
-                        color: textColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (onTap != null)
-                Icon(Icons.chevron_right_rounded, size: 20, color: mutedColor),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildContactItem(EmergencyContact contact) {
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    final textColor = isLight ? const Color(0xFF172235) : Colors.white;
-    final mutedColor = isLight ? const Color(0xFF5F6F8A) : Colors.white38;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isLight ? Colors.white : AppTheme.cardColor,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: isLight ? const Color(0xFFDCE5F6) : Colors.transparent,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isLight ? 0.04 : 0.18),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: AppTheme.primaryColor.withValues(
-                alpha: isLight ? 0.10 : 0.18,
-              ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.contact_phone,
-              color: AppTheme.primaryColor,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  contact.name,
-                  style: TextStyle(color: mutedColor, fontSize: 12),
-                ),
-                Text(
-                  '${contact.phone} • ${contact.relation}',
-                  style: TextStyle(
-                    color: textColor,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: _isSaving ? null : () => _showEditContactDialog(contact),
-            icon: const Icon(Icons.edit_rounded, color: Colors.white70),
-          ),
-          IconButton(
-            onPressed: _isSaving ? null : () => _deleteContact(contact.id),
-            icon: const Icon(
-              Icons.delete_outline_rounded,
-              color: Colors.redAccent,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDailyRouteGuardCard(BuildContext context, WidgetRef ref) {
-    final l10n = AppLocalizations.of(context);
-    final routeState = ref.watch(routeSafetyProvider);
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    final verdict = SafetyVerdictHelper.fromRouteState(
-      l10n,
-      pendingSafetyCheck: routeState.pendingSafetyCheck,
-      riskLabel: routeState.riskLabel,
-      hasLearnedRoute: routeState.hasLearnedRoute,
-      learningRoute: routeState.learningRoute,
-    );
-    final tone = verdict.tone;
-    final countdownText = _formatRouteCountdown(routeState.countdownSeconds);
-    final deviation = routeState.deviationMeters;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isLight
-              ? [Colors.white, Color.lerp(const Color(0xFFF5FAFF), tone, 0.08)!]
-              : [
-                  Color.lerp(AppTheme.cardColor, tone, 0.12)!,
-                  const Color(0xFF101827),
-                ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: routeState.pendingSafetyCheck
-              ? tone.withValues(alpha: 0.5)
-              : isLight
-              ? const Color(0xFFDCE5F6)
-              : Colors.white.withValues(alpha: 0.10),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: tone.withValues(alpha: isLight ? 0.15 : 0.22),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(Icons.route_rounded, color: tone, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      routeState.pendingSafetyCheck
-                          ? l10n.t('safeRouteChanged')
-                          : l10n.t('dailyRouteGuard'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isLight ? const Color(0xFF172235) : Colors.white,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      l10n.localizeStatusMessage(routeState.statusMessage),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: isLight
-                            ? const Color(0xFF627491)
-                            : Colors.white.withValues(alpha: 0.72),
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              SafetyVerdictBadge(
-                headline: verdict.headline,
-                tone: tone,
-                compact: true,
-              ),
-            ],
-          ),
-          if (routeState.learningProgressLabel != null &&
-              !routeState.monitoringMapRoute) ...[
-            const SizedBox(height: 8),
-            Text(
-              l10n.localizeDynamic(routeState.learningProgressLabel),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isLight
-                    ? const Color(0xFF3B5A84)
-                    : Colors.white.withValues(alpha: 0.74),
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _buildRouteChip(
-                context,
-                icon: Icons.shield_rounded,
-                label: l10n.localizeRiskLabel(routeState.riskLabel),
-                color: tone,
-              ),
-              _buildRouteChip(
-                context,
-                icon: routeState.hasLearnedRoute
-                    ? Icons.task_alt_rounded
-                    : Icons.sync_rounded,
-                label: routeState.monitoringMapRoute
-                    ? '${routeState.activeMapRoutePointCount} map points'
-                    : routeState.routineProfileCount > 0
-                    ? l10n
-                          .t('routeGuardRoutinesLearned')
-                          .replaceAll(
-                            '{count}',
-                            '${routeState.routineProfileCount}',
-                          )
-                    : routeState.hasLearnedRoute
-                    ? '${routeState.routeLogCount} route logs'
-                    : l10n.t('routeGuardLearningRoute'),
-                color: const Color(0xFF3B82F6),
-              ),
-              if (routeState.intelligenceLimited)
-                _buildRouteChip(
-                  context,
-                  icon: Icons.info_outline_rounded,
-                  label: l10n.t('routeGuardIntelligenceLimited'),
-                  color: const Color(0xFF8E7CF4),
-                ),
-              if (deviation != null)
-                _buildRouteChip(
-                  context,
-                  icon: Icons.social_distance_rounded,
-                  label: '${deviation.round()} m from pattern',
-                  color: routeState.pendingSafetyCheck
-                      ? const Color(0xFFE53935)
-                      : const Color(0xFF8E7CF4),
-                ),
-            ],
-          ),
-          if (routeState.riskFactors.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              routeState.riskFactors
-                  .take(2)
-                  .map(l10n.localizeDynamic)
-                  .join(' | '),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isLight
-                    ? const Color(0xFF546784)
-                    : Colors.white.withValues(alpha: 0.66),
-                fontSize: 11.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-          if (routeState.monitoringMapRoute &&
-              routeState.activeMapRouteReason != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              routeState.activeMapRouteReason!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: isLight
-                    ? const Color(0xFF546784)
-                    : Colors.white.withValues(alpha: 0.66),
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    unawaited(
-                      ref.read(routeSafetyProvider.notifier).refreshNow(),
-                    );
-                  },
-                  icon: const Icon(Icons.refresh_rounded, size: 16),
-                  label: Text(l10n.t('refresh')),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () =>
-                      _pushWithTransition(context, const SafetyMapScreen()),
-                  icon: const Icon(Icons.map_rounded, size: 16),
-                  label: Text(l10n.t('openMap')),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton.icon(
-              onPressed: () async {
-                await ref
-                    .read(routeSafetyProvider.notifier)
-                    .resetLearnedRoute();
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(l10n.t('homeWorkplaceRouteLearningReset')),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.restart_alt_rounded, size: 16),
-              label: Text(l10n.t('resetHomeWorkplaceRouteLearning')),
-              style: TextButton.styleFrom(
-                foregroundColor: isLight
-                    ? const Color(0xFF172235)
-                    : Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 10,
-                ),
-              ),
-            ),
-          ),
-          if (routeState.pendingSafetyCheck) ...[
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(
-                  0xFFE53935,
-                ).withValues(alpha: isLight ? 0.08 : 0.16),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${l10n.t('safetyCheckEndsIn')} $countdownText ${l10n.t('unlessYouConfirm')}',
-                      style: TextStyle(
-                        color: isLight ? const Color(0xFF6B1D1D) : Colors.white,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    onPressed: () =>
-                        ref.read(routeSafetyProvider.notifier).markUserSafe(),
-                    icon: const Icon(Icons.check_circle_rounded, size: 16),
-                    label: Text(l10n.t('imSafe')),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2FB79E),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size(100, 38),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRouteChip(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required Color color,
-  }) {
-    final isLight = Theme.of(context).brightness == Brightness.light;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: isLight ? 0.10 : 0.16),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.22)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(
-              color: isLight ? const Color(0xFF172235) : Colors.white,
-              fontSize: 10.8,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _pushWithTransition(BuildContext context, Widget screen) {
-    return Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => screen,
-        transitionDuration: const Duration(milliseconds: 480),
-        reverseTransitionDuration: const Duration(milliseconds: 340),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
-          );
-          return FadeTransition(
-            opacity: Tween<double>(begin: 0, end: 1).animate(curved),
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0.04, 0.02),
-                end: Offset.zero,
-              ).animate(curved),
-              child: child,
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  String _formatRouteCountdown(int seconds) {
-    if (seconds <= 0) return 'now';
-    final minutes = seconds ~/ 60;
-    final remainingSeconds = seconds % 60;
-    if (minutes > 0) {
-      return remainingSeconds > 0
-          ? '${minutes}m ${remainingSeconds}s'
-          : '${minutes}m';
-    }
-    return '${seconds}s';
+    return AppNavigator.pushPremium(context, screen);
   }
 
   Future<void> _setScreamDetectionEnabled(bool enabled) async {
+    final l10n = AppLocalizations.of(context);
+    if (enabled) {
+      if (!await ensureEmergencyContactsSaved(context, ref) ||
+          !context.mounted ||
+          !await _confirmDistressMonitoring(microphone: true) ||
+          !context.mounted ||
+          !await _confirmBatteryGuidanceIfNeeded()) {
+        return;
+      }
+    }
     final success = await ref
         .read(screamDetectionProvider.notifier)
-        .setEnabled(enabled);
+        .setEnabled(enabled, allowBatteryPrompt: enabled);
     if (!mounted) return;
 
     final state = ref.read(screamDetectionProvider);
     final message = success
         ? enabled
-              ? 'Scream detection enabled.'
-              : 'Scream detection disabled.'
-        : state.error ?? 'Could not enable scream detection.';
+              ? l10n.t('screamDetectionEnabled')
+              : l10n.t('screamDetectionDisabled')
+        : state.error ?? l10n.t('screamDetectionEnableFailed');
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _setImpactDetectionEnabled(bool enabled) async {
+    final l10n = AppLocalizations.of(context);
+    if (enabled) {
+      if (!await ensureEmergencyContactsSaved(context, ref) ||
+          !context.mounted ||
+          !await _confirmDistressMonitoring(microphone: false)) {
+        return;
+      }
+    }
     final success = await ref
         .read(impactDetectionProvider.notifier)
         .setEnabled(enabled);
@@ -1397,12 +845,94 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final state = ref.read(impactDetectionProvider);
     final message = success
         ? enabled
-              ? 'Impact detection enabled.'
-              : 'Impact detection disabled.'
-        : state.error ?? 'Could not enable impact detection.';
+              ? l10n.t('impactDetectionEnabled')
+              : l10n.t('impactDetectionDisabled')
+        : state.error ?? l10n.t('impactDetectionEnableFailed');
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<bool> _confirmDistressMonitoring({
+    required bool microphone,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final consentKey = microphone
+        ? 'distress_consent_scream_v1'
+        : 'distress_consent_impact_v1';
+    if (prefs.getBool(consentKey) == true) return true;
+
+    if (!mounted) return false;
+    final l10n = AppLocalizations.of(context);
+    final accepted =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            icon: Icon(
+              microphone ? Icons.mic_rounded : Icons.sensors_rounded,
+              color: AppTheme.primaryColor,
+              size: 42,
+            ),
+            title: Text(l10n.t('distressConsentTitle')),
+            content: Text(
+              microphone
+                  ? l10n.t('distressMicrophoneConsentBody')
+                  : l10n.t('distressImpactConsentBody'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(l10n.t('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(l10n.t('enableMonitoring')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (accepted) {
+      await prefs.setBool(consentKey, true);
+    }
+    return accepted;
+  }
+
+  Future<bool> _confirmBatteryGuidanceIfNeeded() async {
+    final restricted =
+        await DistressForegroundController.isBatteryRestricted();
+    if (!restricted) return true;
+    if (!mounted) return false;
+
+    final l10n = AppLocalizations.of(context);
+    final accepted =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            icon: const Icon(
+              Icons.battery_alert_rounded,
+              color: Colors.orange,
+              size: 42,
+            ),
+            title: Text(l10n.t('distressBatteryGuidanceTitle')),
+            content: Text(l10n.t('distressBatteryGuidanceBody')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(l10n.t('cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(l10n.t('continue')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    return accepted;
   }
 
   Future<void> _showEditProfileDialog(
@@ -1510,7 +1040,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   );
                 }
               } catch (error) {
-                _showError(_extractError(error));
+                _showError(ProfileFormatHelpers.extractError(error));
               }
             },
             child: Text(l10n.t('save')),
@@ -1618,8 +1148,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                 name: name,
                                 phone: phone,
                                 relation: relation.isEmpty
-                                    ? 'Emergency Contact'
+                                    ? l10n.t('emergencyContactDefault')
                                     : relation,
+                                priority:
+                                    ref.read(emergencyContactsProvider).isEmpty
+                                    ? 0
+                                    : 1,
                               ),
                             );
                         if (!mounted) return;
@@ -1635,7 +1169,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           l10n.t('contactSavedMessage'),
                         );
                       } catch (error) {
-                        _showError(_extractError(error));
+                        _showError(ProfileFormatHelpers.extractError(error));
                         if (mounted) setDialogState(() => saving = false);
                       }
                     },
@@ -1733,8 +1267,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         name: nameController.text.trim(),
                         phone: phoneController.text.trim(),
                         relation: relationController.text.trim().isEmpty
-                            ? 'Emergency Contact'
+                            ? l10n.t('emergencyContactDefault')
                             : relationController.text.trim(),
+                        priority: contact.priority,
                       ),
                     );
                 if (!mounted) return;
@@ -1748,7 +1283,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   l10n.t('contactSavedMessage'),
                 );
               } catch (error) {
-                _showError(_extractError(error));
+                _showError(ProfileFormatHelpers.extractError(error));
               }
             },
             child: Text(l10n.t('save')),
@@ -1802,7 +1337,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ),
       );
     } catch (error) {
-      _showError(_extractError(error));
+      _showError(ProfileFormatHelpers.extractError(error));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -1815,18 +1350,38 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     required String bloodGroup,
   }) async {
     try {
-      final response = await _dio.patch(
-        ApiConstants.profile,
-        data: {
-          'fullName': fullName,
-          'email': email,
-          'phone': phone,
-          'bloodGroup': bloodGroup,
-        },
-      );
-      final updatedUser = UserModel.fromJson(
-        response.data as Map<String, dynamic>,
-      );
+      final currentEmail =
+          (ref.read(authProvider).user?.email ?? '').trim().toLowerCase();
+      final nextEmail = email.trim().toLowerCase();
+      final payload = <String, dynamic>{
+        'fullName': fullName,
+        'bloodGroup': bloodGroup,
+      };
+
+      if (nextEmail.isNotEmpty && nextEmail != currentEmail) {
+        final verified = await _verifyEmailChangeOtp(nextEmail);
+        if (verified == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  AppLocalizations.of(context).t('verifyEmailFirst'),
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        payload['email'] = nextEmail;
+        payload['emailVerificationToken'] = verified.token;
+        payload['password'] = verified.password;
+      } else if (nextEmail.isNotEmpty) {
+        payload['email'] = nextEmail;
+      }
+
+      final data = await _profileRepo.patchProfile(payload);
+      if (data == null) return;
+      final updatedUser = UserModel.fromJson(data);
       ref.read(authProvider.notifier).updateUser(updatedUser);
       await _saveLocalProfile(
         fullName: updatedUser.name,
@@ -1852,6 +1407,104 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } catch (_) {
       // Keep the local save as the source of truth.
     }
+  }
+
+  Future<({String token, String password})?> _verifyEmailChangeOtp(
+    String email,
+  ) async {
+    final l10n = AppLocalizations.of(context);
+    final passwordController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.t('signUpVerifyEmail')),
+        content: TextField(
+          controller: passwordController,
+          obscureText: true,
+          autofocus: true,
+          decoration: InputDecoration(labelText: l10n.t('password')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.t('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, passwordController.text),
+            child: Text(l10n.t('continue')),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (password == null || password.isEmpty || !mounted) {
+      return null;
+    }
+
+    final send = await ref.read(authProvider.notifier).requestEmailChange(
+          email: email,
+          password: password,
+        );
+    if (!send.success) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(send.error ?? l10n.t('otpSendFailed'))),
+        );
+      }
+      return null;
+    }
+    if (!mounted) return null;
+
+    final codeController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.t('signUpVerifyEmail')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l10n.t('otpSent')),
+            const SizedBox(height: 12),
+            TextField(
+              controller: codeController,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: InputDecoration(labelText: l10n.t('enterOtp')),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(l10n.t('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(l10n.t('verifyOtp')),
+          ),
+        ],
+      ),
+    );
+    final code = codeController.text.trim();
+    codeController.dispose();
+    if (confirmed != true || code.length < 4) return null;
+
+    final verified = await ref.read(authProvider.notifier).verifyOtp(
+          email: email,
+          code: code,
+          purpose: 'change_email',
+        );
+    if (!verified.success || verified.verificationToken == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(verified.error ?? l10n.t('otpInvalid'))),
+        );
+      }
+      return null;
+    }
+    return (token: verified.verificationToken!, password: password);
   }
 
   Future<void> _pickAndUploadPhoto() async {
@@ -1887,7 +1540,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       );
       unawaited(_syncProfilePhotoToServer(picked.path));
     } catch (error) {
-      _showError('$photoSavedLocallyMessage ${_extractError(error)}');
+      _showError('$photoSavedLocallyMessage ${ProfileFormatHelpers.extractError(error)}');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -1895,16 +1548,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Future<void> _syncProfilePhotoToServer(String photoPath) async {
     try {
-      final formData = FormData.fromMap({
-        'file': await MultipartFile.fromFile(photoPath),
-      });
-      final response = await _dio.post(
-        '${ApiConstants.profile}/photo',
-        data: formData,
-      );
-      final updatedUser = UserModel.fromJson(
-        response.data as Map<String, dynamic>,
-      );
+      final data = await _profileRepo.uploadPhoto(photoPath);
+      if (data == null) return;
+      final updatedUser = UserModel.fromJson(data);
       ref.read(authProvider.notifier).updateUser(updatedUser);
       unawaited(
         ref.read(profileDisplayProvider.notifier).update(photoPath: photoPath),
@@ -1918,7 +1564,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       await ref.read(emergencyContactsProvider.notifier).deleteContact(id);
     } catch (error) {
-      _showError(_extractError(error));
+      _showError(ProfileFormatHelpers.extractError(error));
     }
   }
 }

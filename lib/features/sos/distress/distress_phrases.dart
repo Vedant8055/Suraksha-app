@@ -27,6 +27,7 @@ class DistressPhrases {
     'mujhe bachao please',
     'madad',
     'madad karo',
+    'madad kariye',
     'chhodo',
     'chhodo mujhe',
     'mujhe chhodo',
@@ -34,9 +35,12 @@ class DistressPhrases {
     'chhod do',
     'bachao please',
     'help kar',
+    'bachao muje',
+    'muje bachao',
     // Hindi (Devanagari)
     'बचाओ',
     'मुझे बचाओ',
+    'बचाओ मुझे',
     'मदद',
     'मदद करो',
     'छोड़ो',
@@ -47,6 +51,8 @@ class DistressPhrases {
     'mala vachava',
     'vachva',
     'vachava',
+    'vachva mala',
+    'vachava mala',
     'mala sod',
     'mala soda',
     'mala sodun de',
@@ -57,6 +63,7 @@ class DistressPhrases {
     // Marathi (Devanagari)
     'मला वाचवा',
     'वाचवा',
+    'वाचवा मला',
     'मला सोड',
     'मला सोडा',
     'मला सोडून दे',
@@ -70,4 +77,14 @@ class DistressPhrases {
     'hi_IN',
     'mr_IN',
   ];
+
+  /// Prioritize STT locale order based on app language.
+  static List<String> speechLocalesForLanguage(String languageCode) {
+    final code = languageCode.toLowerCase().split(RegExp(r'[_-]')).first;
+    return switch (code) {
+      'hi' => const ['hi_IN', 'en_IN', 'en_US', 'mr_IN'],
+      'mr' => const ['mr_IN', 'hi_IN', 'en_IN', 'en_US'],
+      _ => const ['en_IN', 'en_US', 'hi_IN', 'mr_IN'],
+    };
+  }
 }

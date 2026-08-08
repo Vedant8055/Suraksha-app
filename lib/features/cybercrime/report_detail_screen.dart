@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/models/cybercrime_models.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/services/cyber_protection_service.dart';
+import 'package:suraksha_women_safety_app/features/cybercrime/utils/cyber_vault_lock.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/utils/cybercrime_utils.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cyber_portal_filing_card.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cybercrime_widgets.dart';
@@ -26,13 +27,23 @@ class CyberReportDetailScreen extends StatefulWidget {
 }
 
 class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
+  final _vaultLock = CyberVaultLock();
   CyberReportDetail? _detail;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    // Clear any leftover viewing lock from older app versions.
+    try {
+      await _vaultLock.disable();
+    } catch (_) {}
+    if (!mounted) return;
+    await _load();
   }
 
   Future<void> _load() async {
@@ -55,7 +66,8 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
     try {
       final downloaded = await widget.service.downloadEvidence(item.id);
       if (!mounted) return;
-      if (downloaded.mimeType.startsWith('image/')) {
+      final mime = downloaded.mimeType.split(';').first.trim().toLowerCase();
+      if (mime.startsWith('image/')) {
         await showDialog<void>(
           context: context,
           builder: (context) => Dialog(
@@ -63,6 +75,12 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
               child: Image.memory(
                 Uint8List.fromList(downloaded.bytes),
                 fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    AppLocalizations.of(context).t('previewFailed'),
+                  ),
+                ),
               ),
             ),
           ),
@@ -73,6 +91,43 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
     } on DioException catch (error) {
       if (await widget.onApiError(error)) return;
       if (mounted) showCyberSnack(context, friendlyCyberError(context, error));
+    }
+  }
+
+  Future<void> _deleteEvidence(EvidenceItem item) async {
+    final l10n = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.t('deleteEvidenceTitle')),
+        content: Text(
+          l10n.t('deleteEvidenceConfirm').replaceFirst('{title}', item.title),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.t('no')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.t('yes')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.service.deleteEvidence(item.id);
+      await _load();
+      if (mounted) showCyberSnack(context, l10n.t('evidenceDeleted'));
+    } on DioException catch (error) {
+      if (await widget.onApiError(error)) return;
+      if (mounted) {
+        showCyberSnack(
+          context,
+          '${l10n.t('deleteFailed')} ${friendlyCyberError(context, error)}',
+        );
+      }
     }
   }
 
@@ -193,6 +248,44 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
                     filedOnPortalAt: detail.report.filedOnPortalAt,
                     onAcknowledgementSaved: _load,
                   ),
+                  const SizedBox(height: 12),
+                  CyberCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CyberCardTitle(l10n.t('cyberAcknowledgementHistory')),
+                        if (detail.report.acknowledgementHistory.isEmpty)
+                          Text(
+                            l10n.t('cyberAcknowledgementHistoryEmpty'),
+                            style: TextStyle(
+                              color: Theme.of(context).brightness ==
+                                      Brightness.light
+                                  ? const Color(0xFF6B7C95)
+                                  : Colors.white60,
+                            ),
+                          )
+                        else
+                          ...detail.report.acknowledgementHistory.reversed.map(
+                            (entry) => ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              leading: const Icon(Icons.receipt_long_rounded),
+                              title: Text(entry.number),
+                              subtitle: Text(
+                                l10n.t('cyberAckSavedAt').replaceFirst(
+                                      '{when}',
+                                      entry.savedAt
+                                          .toLocal()
+                                          .toString()
+                                          .split('.')
+                                          .first,
+                                    ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ],
                 CyberCard(
                   child: Column(
@@ -225,7 +318,7 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
                             item: item,
                             onPreview: () => _previewEvidence(item),
                             onDownload: () => _previewEvidence(item),
-                            onDelete: () {},
+                            onDelete: () => _deleteEvidence(item),
                           ),
                         ),
                     ],

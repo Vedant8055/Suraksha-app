@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Suraksha Women Safety App</string>
+	<key>GoogleMapsAPIKey</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -32,8 +34,14 @@
 	<string>This app may save evidence related data to your selected photos.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Suraksha listens for screams and distress phrases like help or bachao to trigger SOS when you need help.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Suraksha may use the camera for Sentinel emergency evidence only after an SOS, if you enable Sentinel. No capture happens during normal use.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Suraksha uses your location for safety maps and may attach GPS to Sentinel emergency evidence only after an SOS, if you enable Sentinel.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Suraksha uses offline speech recognition to detect distress phrases and help keep you safe.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Suraksha uses Face ID to unlock your Medical Health Vault securely.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

@@ -12,7 +12,18 @@ class ApiConstants {
   static const String otpVerify = '/auth/otp/verify';
   static const String forgotPassword = '/auth/forgot-password';
   static const String resetPassword = '/auth/reset-password';
+  static const String authSessions = '/auth/sessions';
+  static const String authSessionsRevokeOthers = '/auth/sessions/revoke-others';
+  static const String authSessionsRevokeAll = '/auth/sessions/revoke-all';
   static const String profile = '/profile';
+  static const String profileEmailRequestChange = '/profile/email/request-change';
+  static const String profileEmailVerifyChange = '/profile/email/verify-change';
+  static const String profileExport = '/profile/export';
+  static const String profileDeleteLocation = '/profile/data/location';
+  static const String profileDeleteMedical = '/profile/data/medical';
+  static const String profileDeleteIncidents = '/profile/data/incidents';
+  static const String profileDeleteEvidence = '/profile/data/evidence';
+  static const String profileDeleteAccount = '/profile/account';
 
   static const String createSOS = '/sos/create';
   static const String cancelSOS = '/sos/cancel';
@@ -22,10 +33,18 @@ class ApiConstants {
   static const String incidentReport = '/incident/report';
   static const String nearbyPolice = '/nearby/police';
   static const String nearbyHospitals = '/nearby/hospitals';
+  static const String nearbyEmergencyServices = '/nearby/emergency-services';
+  static const String nearbyPlaces = '/nearby/places';
+  static const String nearbyAutocomplete = '/nearby/autocomplete';
+  static const String nearbyPlaceDetails = '/nearby/place-details';
+  static const String nearbyDirections = '/nearby/directions';
   static const String nearbyToilets = '/safety/toilets/nearby';
   static const String aiChat = '/ai/chat';
+  static const String aiConversation = '/ai/conversation';
+  static const String aiFeedback = '/ai/feedback';
   static const String uploadMedia = '/media/upload';
   static const String notifications = '/notifications';
+  static String notificationAck(String id) => '/notifications/$id/ack';
   static const String contacts = '/profile/contacts';
   static const String cyberAnalyze = '/cybercrime/assistant/analyze';
   static const String cyberAnalyzeImage = '/cybercrime/assistant/analyze-image';

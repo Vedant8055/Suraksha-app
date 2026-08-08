@@ -145,4 +145,22 @@ void main() {
     marker.onTap?.call();
     expect(tapped, same(toilet));
   });
+
+  test('nearby scope sends radius but not scope query param', () {
+    const filters = NearbyCleanToiletFilters();
+    final query = filters.toQueryParameters(latitude: 19.99, longitude: 73.79);
+
+    expect(query.containsKey('scope'), isFalse);
+    expect(query['radius'], 3000);
+    expect(query['limit'], 100);
+  });
+
+  test('all-toilets scope sends scope=all and omits radius', () {
+    const filters = NearbyCleanToiletFilters(scope: ToiletSearchScope.all);
+    final query = filters.toQueryParameters(latitude: 19.99, longitude: 73.79);
+
+    expect(query['scope'], 'all');
+    expect(query.containsKey('radius'), isFalse);
+    expect(query['limit'], 100);
+  });
 }

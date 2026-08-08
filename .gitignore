@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 
 # Environment files
@@ -27,3 +27,20 @@ coverage/
 # Cache
 .cache/
 .next/
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# Java/Gradle crash dumps (never commit)
+*.hprof
+android/*.hprof
+**/java_pid*.hprof
+
+# Signing keys
+*.jks
+*.keystore
+keystore/
+

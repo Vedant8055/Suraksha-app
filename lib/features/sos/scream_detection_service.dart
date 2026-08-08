@@ -5,9 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/features/sos/distress/distress_foreground_controller.dart';
+import 'package:suraksha_women_safety_app/features/sos/distress/distress_phrases.dart';
 import 'package:suraksha_women_safety_app/features/sos/distress/offline_speech_engine.dart';
 import 'package:suraksha_women_safety_app/features/sos/distress/scream_audio_classifier.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/features/sos/sos_provider.dart';
 
 final screamDetectionProvider =
@@ -30,6 +33,9 @@ class ScreamDetectionState {
   final double? lastScreamScore;
   final DistressTriggerType? lastTriggerType;
   final String? error;
+  final bool batteryRestricted;
+  final int falsePositiveCount;
+  final DateTime? lastTestDetectionAt;
 
   const ScreamDetectionState({
     this.enabled = false,
@@ -44,6 +50,9 @@ class ScreamDetectionState {
     this.lastScreamScore,
     this.lastTriggerType,
     this.error,
+    this.batteryRestricted = false,
+    this.falsePositiveCount = 0,
+    this.lastTestDetectionAt,
   });
 
   ScreamDetectionState copyWith({
@@ -60,6 +69,9 @@ class ScreamDetectionState {
     DistressTriggerType? lastTriggerType,
     bool clearLastDetection = false,
     String? error,
+    bool? batteryRestricted,
+    int? falsePositiveCount,
+    DateTime? lastTestDetectionAt,
   }) {
     return ScreamDetectionState(
       enabled: enabled ?? this.enabled,
@@ -82,6 +94,9 @@ class ScreamDetectionState {
           ? null
           : (lastTriggerType ?? this.lastTriggerType),
       error: error,
+      batteryRestricted: batteryRestricted ?? this.batteryRestricted,
+      falsePositiveCount: falsePositiveCount ?? this.falsePositiveCount,
+      lastTestDetectionAt: lastTestDetectionAt ?? this.lastTestDetectionAt,
     );
   }
 }
@@ -95,15 +110,26 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
   StreamSubscription<Uint8List>? _audioSub;
   Timer? _countdownTimer;
   Timer? _speechCycleTimer;
+  Timer? _permissionTimer;
   bool _starting = false;
   bool _speechCycleActive = false;
+  bool _foregroundListenerAttached = false;
   DateTime? _lastTriggerAt;
   DateTime? _lastScreamSignalAt;
+  int _screamChunkStreak = 0;
 
   static const String _preferenceKey = 'scream_detection_enabled_v1';
   static const String _sensitivityKey = 'distress_sensitivity_v1';
   static const String _testModeKey = 'distress_test_mode_v1';
+  static const String _localeKey = 'app_locale_v1';
+  static const String _falsePositiveCountKey =
+      'distress_false_positive_count_v1';
   static const Duration _triggerCooldown = Duration(minutes: 2);
+  static const Duration _speechCycleInterval = Duration(seconds: 10);
+  static const Duration _initialSpeechDelay = Duration(seconds: 3);
+  static const Duration _speechBurstDuration = Duration(seconds: 7);
+  static const Duration _screamDebounce = Duration(seconds: 5);
+  static const int _screamChunksRequired = 3;
   static const int _countdownStartSeconds = 10;
 
   Future<void> _startAudioStream() async {
@@ -148,11 +174,18 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       sampleRate: 16000,
       sensitivity: state.sensitivity,
     );
-    if (!result.isScream) return;
+    if (!result.isScream) {
+      _screamChunkStreak = 0;
+      return;
+    }
+
+    _screamChunkStreak++;
+    if (_screamChunkStreak < _screamChunksRequired) return;
+    _screamChunkStreak = 0;
 
     final now = DateTime.now();
     if (_lastScreamSignalAt != null &&
-        now.difference(_lastScreamSignalAt!) < const Duration(seconds: 8)) {
+        now.difference(_lastScreamSignalAt!) < _screamDebounce) {
       return;
     }
     _lastScreamSignalAt = now;
@@ -176,6 +209,7 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
         enabled: enabled,
         sensitivity: sensitivity,
         testMode: testMode,
+        falsePositiveCount: prefs.getInt(_falsePositiveCountKey) ?? 0,
       );
       if (enabled) {
         await startMonitoring();
@@ -184,12 +218,15 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       state = state.copyWith(
         enabled: false,
         monitoring: false,
-        error: 'Scream detection could not start automatically.',
+        error: l10nSync('screamDetectionEnableFailed'),
       );
     }
   }
 
-  Future<bool> setEnabled(bool enabled) async {
+  Future<bool> setEnabled(
+    bool enabled, {
+    bool allowBatteryPrompt = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     if (!enabled) {
       await stopMonitoring();
@@ -198,7 +235,17 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       return true;
     }
 
-    final started = await startMonitoring();
+    if (!FeatureFlags.backgroundMicrophone) {
+      state = state.copyWith(
+        enabled: false,
+        error: l10nSync('featureUnavailable'),
+      );
+      return false;
+    }
+
+    final started = await startMonitoring(
+      allowBatteryPrompt: allowBatteryPrompt,
+    );
     if (started) {
       await prefs.setBool(_preferenceKey, true);
       state = state.copyWith(enabled: true, error: null);
@@ -236,6 +283,10 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
   }
 
   Future<void> resumeIfEnabled() async {
+    if (state.enabled && await Permission.microphone.status != PermissionStatus.granted) {
+      await _handlePermissionLoss();
+      return;
+    }
     if (state.enabled && !state.monitoring) {
       await startMonitoring();
     } else if (state.enabled && state.monitoring && _audioSub == null && !_speechCycleActive) {
@@ -244,7 +295,15 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
     }
   }
 
-  Future<bool> startMonitoring() async {
+  Future<bool> startMonitoring({bool allowBatteryPrompt = false}) async {
+    if (!FeatureFlags.backgroundMicrophone) {
+      state = state.copyWith(
+        monitoring: false,
+        enabled: false,
+        error: l10nSync('featureUnavailable'),
+      );
+      return false;
+    }
     if (state.monitoring) return true;
     if (_starting) return false;
     _starting = true;
@@ -254,7 +313,7 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       state = state.copyWith(
         monitoring: false,
         permissionGranted: false,
-        error: 'Microphone permission is needed for scream detection.',
+        error: l10nSync('sosMicrophonePermissionNeeded'),
       );
       _starting = false;
       return false;
@@ -265,9 +324,14 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       final fgStarted = await DistressForegroundController.start(
         sensitivity: state.sensitivity.name,
         testMode: state.testMode,
+        allowBatteryPrompt: allowBatteryPrompt,
       );
       if (!fgStarted) {
-        throw StateError('Could not start background distress monitor.');
+        throw StateError(l10nSync('screamDetectionEnableFailed'));
+      }
+      if (!_foregroundListenerAttached) {
+        DistressForegroundController.addDataListener(_onForegroundData);
+        _foregroundListenerAttached = true;
       }
 
       _speech.setTestMode(state.testMode);
@@ -277,15 +341,18 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       state = state.copyWith(
         monitoring: true,
         permissionGranted: true,
+        batteryRestricted:
+            await DistressForegroundController.isBatteryRestricted(),
         error: null,
       );
+      _startPermissionMonitor();
       return true;
     } catch (error) {
       await stopMonitoring();
       state = state.copyWith(
         monitoring: false,
         permissionGranted: true,
-        error: 'Could not start scream detection: $error',
+        error: l10nSync('screamDetectionEnableFailed'),
       );
       return false;
     } finally {
@@ -295,11 +362,39 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
 
   void _startSpeechCycle() {
     _speechCycleTimer?.cancel();
-    _speechCycleTimer = Timer.periodic(const Duration(seconds: 18), (_) {
+    _speechCycleTimer = Timer.periodic(_speechCycleInterval, (_) {
       if (!state.monitoring || _speechCycleActive) return;
       unawaited(_runSpeechBurst());
     });
-    unawaited(Future<void>.delayed(const Duration(seconds: 4), _runSpeechBurst));
+    unawaited(Future<void>.delayed(_initialSpeechDelay, _runSpeechBurst));
+  }
+
+  void _startPermissionMonitor() {
+    _permissionTimer?.cancel();
+    _permissionTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      if (!state.monitoring) return;
+      if (await Permission.microphone.status != PermissionStatus.granted) {
+        await _handlePermissionLoss();
+      }
+    });
+  }
+
+  void _onForegroundData(Object data) {
+    if (data is Map && data['cmd'] == 'stop_monitoring') {
+      unawaited(setEnabled(false));
+    }
+  }
+
+  Future<void> _handlePermissionLoss() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_preferenceKey, false);
+    await stopMonitoring();
+    state = state.copyWith(
+      enabled: false,
+      monitoring: false,
+      permissionGranted: false,
+      error: l10nSync('sosMicrophonePermissionNeeded'),
+    );
   }
 
   Future<void> _runSpeechBurst() async {
@@ -307,8 +402,12 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
     _speechCycleActive = true;
     await _stopAudioStream();
     _speech.setTestMode(state.testMode);
+    _speech.setBurstDuration(_speechBurstDuration);
+    final prefs = await SharedPreferences.getInstance();
+    final lang = prefs.getString(_localeKey) ?? 'en';
+    _speech.setPreferredLocales(DistressPhrases.speechLocalesForLanguage(lang));
     await _speech.startListening(onResult: _onSpeechResult);
-    await Future<void>.delayed(const Duration(seconds: 5));
+    await Future<void>.delayed(_speechBurstDuration);
     await _speech.stopListening();
     _speechCycleActive = false;
     if (state.monitoring) {
@@ -321,7 +420,10 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
     _countdownTimer = null;
     _speechCycleTimer?.cancel();
     _speechCycleTimer = null;
+    _permissionTimer?.cancel();
+    _permissionTimer = null;
     _speechCycleActive = false;
+    _screamChunkStreak = 0;
     await _speech.stopListening();
     await _stopAudioStream();
     await DistressForegroundController.stop();
@@ -373,6 +475,7 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
       lastSpeechSnippet: speechText ?? state.lastSpeechSnippet,
       lastScreamScore: screamScore,
       clearLastDetection: false,
+      lastTestDetectionAt: testMode ? now : state.lastTestDetectionAt,
     );
 
     if (testMode) return;
@@ -424,6 +527,18 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
     );
   }
 
+  Future<void> openMicrophoneSettings() {
+    return openAppSettings();
+  }
+
+  Future<void> recordFalsePositive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final count = state.falsePositiveCount + 1;
+    await prefs.setInt(_falsePositiveCountKey, count);
+    cancelPendingDistress();
+    state = state.copyWith(falsePositiveCount: count);
+  }
+
   DistressSensitivity _parseSensitivity(String? raw) {
     return switch (raw) {
       'low' => DistressSensitivity.low,
@@ -434,6 +549,9 @@ class ScreamDetectionService extends StateNotifier<ScreamDetectionState> {
 
   @override
   void dispose() {
+    if (_foregroundListenerAttached) {
+      DistressForegroundController.removeDataListener(_onForegroundData);
+    }
     stopMonitoring();
     super.dispose();
   }

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
@@ -9,25 +11,38 @@ import 'package:suraksha_women_safety_app/core/network/auth_token_storage.dart';
 import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
 import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
 import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
+import 'package:suraksha_women_safety_app/core/storage/medical_vault_storage.dart';
+import 'package:suraksha_women_safety_app/features/auth/device_identity.dart';
+import 'package:suraksha_women_safety_app/features/auth/indian_phone_utils.dart';
+import 'package:suraksha_women_safety_app/features/auth/password_strength.dart';
+import 'package:suraksha_women_safety_app/features/cybercrime/utils/cyber_vault_lock.dart';
+import 'package:suraksha_women_safety_app/features/posh/posh_complaint_draft_storage.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_session_cache.dart';
+import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/models/user_model.dart';
 
 const Object _unset = Object();
 
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier()..restoreSession();
+  final notifier = AuthNotifier();
+  AuthInterceptor.onSessionInvalidated = () {
+    unawaited(notifier.forceLocalSignOut());
+  };
+  return notifier..restoreSession();
 });
 
 class OtpSendResult {
   final bool success;
-  final String? devCode;
   final String? error;
   final int resendAfterSeconds;
+  final int? retryAfterSeconds;
 
   const OtpSendResult({
     required this.success,
-    this.devCode,
     this.error,
     this.resendAfterSeconds = 60,
+    this.retryAfterSeconds,
   });
 }
 
@@ -35,12 +50,46 @@ class OtpVerifyResult {
   final bool success;
   final String? verificationToken;
   final String? error;
+  final int? retryAfterSeconds;
 
   const OtpVerifyResult({
     required this.success,
     this.verificationToken,
     this.error,
+    this.retryAfterSeconds,
   });
+}
+
+class AuthSessionInfo {
+  final String id;
+  final String? deviceId;
+  final String? platform;
+  final String? deviceLabel;
+  final DateTime? lastActiveAt;
+  final DateTime? createdAt;
+  final bool isCurrent;
+
+  const AuthSessionInfo({
+    required this.id,
+    this.deviceId,
+    this.platform,
+    this.deviceLabel,
+    this.lastActiveAt,
+    this.createdAt,
+    required this.isCurrent,
+  });
+
+  factory AuthSessionInfo.fromJson(Map<String, dynamic> json) {
+    return AuthSessionInfo(
+      id: json['id']?.toString() ?? '',
+      deviceId: json['deviceId']?.toString(),
+      platform: json['platform']?.toString(),
+      deviceLabel: json['deviceLabel']?.toString(),
+      lastActiveAt: DateTime.tryParse(json['lastActiveAt']?.toString() ?? ''),
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+      isCurrent: json['isCurrent'] == true,
+    );
+  }
 }
 
 class AuthState {
@@ -90,6 +139,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final Dio _dio;
   final FlutterSecureStorage _storage;
 
+  Future<Map<String, String>> _devicePayload() async {
+    return {
+      'deviceId': await DeviceIdentity.deviceId(),
+      'platform': DeviceIdentity.platformLabel(),
+      'deviceLabel': await DeviceIdentity.deviceLabel(),
+    };
+  }
+
   Future<void> restoreSession() async {
     try {
       final token = await _storage.read(key: AuthTokenStorage.tokenKey);
@@ -98,7 +155,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
         return;
       }
 
-      state = state.copyWith(isInitializing: true, token: token, error: null);
+      // Show the cached profile immediately (if any) so the UI doesn't sit
+      // on a splash/loading state while the network profile fetch runs.
+      // The network fetch below still refreshes `user` in the background.
+      final cachedUser = await ProfileSessionCache.readUser();
+      if (cachedUser != null) {
+        state = state.copyWith(
+          isInitializing: false,
+          token: token,
+          user: cachedUser,
+          error: null,
+        );
+      } else {
+        state = state.copyWith(isInitializing: true, token: token, error: null);
+      }
+
       final user = await _fetchProfile().timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw TimeoutException('Session restore timed out'),
@@ -109,6 +180,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         user: user,
         error: null,
       );
+      await ProfileSessionCache.syncFromUser(user);
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
         final refreshed = await AuthInterceptor.tryRefreshSession().timeout(
@@ -127,20 +199,53 @@ class AuthNotifier extends StateNotifier<AuthState> {
               user: user,
               error: null,
             );
+            await ProfileSessionCache.syncFromUser(user);
             return;
           } catch (_) {
-            // fall through to clear
+            // fall through to clear only on hard auth failure
           }
         }
-        await _clearStoredCredentials();
+        await forceLocalSignOut();
+        return;
       }
-      state = AuthState(isInitializing: false);
+      // Network/server errors: keep tokens and cached profile; retry later.
+      final cached = await ProfileSessionCache.readUser();
+      state = state.copyWith(
+        isInitializing: false,
+        token: await _storage.read(key: AuthTokenStorage.tokenKey),
+        user: cached ?? state.user,
+        error: null,
+      );
     } on TimeoutException catch (_) {
-      await _clearStoredCredentials();
-      state = AuthState(isInitializing: false);
+      final cached = await ProfileSessionCache.readUser();
+      state = state.copyWith(
+        isInitializing: false,
+        token: await _storage.read(key: AuthTokenStorage.tokenKey),
+        user: cached ?? state.user,
+        error: null,
+      );
     } catch (_) {
-      state = AuthState(isInitializing: false);
+      final cached = await ProfileSessionCache.readUser();
+      state = state.copyWith(
+        isInitializing: false,
+        token: await _storage.read(key: AuthTokenStorage.tokenKey),
+        user: cached ?? state.user,
+        error: null,
+      );
     }
+  }
+
+  /// Clears local auth state after interceptor/session invalidation.
+  Future<void> forceLocalSignOut() async {
+    final userId = state.user?.id;
+    await ProfileSessionCache.clearAll(userId: userId);
+    if (userId != null && userId.isNotEmpty) {
+      await MedicalVaultStorage.clearForUser(userId);
+    }
+    await PoshComplaintDraftStorage().clear();
+    await CyberVaultLock().disable();
+    await _clearStoredCredentials();
+    state = AuthState(isInitializing: false);
   }
 
   Future<UserModel> _fetchProfile() async {
@@ -148,11 +253,23 @@ class AuthNotifier extends StateNotifier<AuthState> {
     return UserModel.fromJson(response.data as Map<String, dynamic>);
   }
 
+  Future<String> _localized(
+    String key, {
+    Map<String, String> params = const {},
+  }) async {
+    final l10n = await AppLocalizations.current();
+    return applyL10nParams(l10n.t(key), params);
+  }
+
   Future<bool> login(String identifier, String password) async {
     final trimmedId = identifier.trim();
-    final trimmedPassword = password.trim();
-    if (trimmedId.isEmpty || trimmedPassword.isEmpty) {
-      state = state.copyWith(error: 'Please enter email/phone and password.');
+    final normalizedPhone = IndianPhoneUtils.forApi(trimmedId);
+    final loginIdentifier = normalizedPhone.length == 10 ? normalizedPhone : trimmedId;
+    // Do not trim password — trailing/leading spaces may be intentional.
+    if (loginIdentifier.isEmpty || password.isEmpty) {
+      state = state.copyWith(
+        error: await _localized('authEnterEmailPhonePassword'),
+      );
       return false;
     }
 
@@ -160,81 +277,103 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       final response = await _authPost(
         ApiConstants.login,
-        data: {'identifier': trimmedId, 'password': trimmedPassword},
+        data: {
+          'identifier': loginIdentifier,
+          'password': password,
+          ...(await _devicePayload()),
+        },
       );
       await _applyAuthResponse(response.data as Map<String, dynamic>);
+      TextInput.finishAutofillContext(shouldSave: true);
       return true;
     } on DioException catch (error) {
       state = state.copyWith(
         isLoading: false,
-        error: _messageFromDio(error, fallback: 'Login failed. Please try again.'),
+        error: (await _messageFromDio(error, fallbackKey: 'authLoginFailed')).message,
       );
       return false;
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
-        error: 'Login failed. Please try again.',
+        error: await _localized('authLoginFailed'),
       );
       return false;
     }
   }
 
   Future<OtpSendResult> sendOtp({
-    required String phone,
+    required String email,
     required String purpose,
   }) async {
     try {
       final response = await _authPost(
         ApiConstants.otpSend,
-        data: {'phone': phone, 'purpose': purpose},
+        data: {'email': email.trim().toLowerCase(), 'purpose': purpose},
       );
       final data = response.data as Map<String, dynamic>;
       return OtpSendResult(
         success: true,
-        devCode: data['devCode']?.toString(),
         resendAfterSeconds: (data['resendAfterSeconds'] as num?)?.toInt() ?? 60,
       );
     } on DioException catch (error) {
+      final parsed = await _messageFromDio(
+        error,
+        fallbackKey: 'otpSendFailed',
+      );
       return OtpSendResult(
         success: false,
-        error: _messageFromDio(error, fallback: 'Could not send OTP.'),
+        error: parsed.message,
+        retryAfterSeconds: parsed.retryAfterSeconds,
+        resendAfterSeconds: parsed.retryAfterSeconds ?? 60,
       );
     } catch (_) {
-      return const OtpSendResult(
+      return OtpSendResult(
         success: false,
-        error: 'Could not send OTP.',
+        error: await _localized('otpSendFailed'),
       );
     }
   }
 
   Future<OtpVerifyResult> verifyOtp({
-    required String phone,
+    required String email,
     required String code,
     required String purpose,
   }) async {
     try {
-      final response = await _authPost(
-        ApiConstants.otpVerify,
-        data: {'phone': phone, 'code': code.trim(), 'purpose': purpose},
-      );
+      final path = purpose == 'change_email'
+          ? ApiConstants.profileEmailVerifyChange
+          : ApiConstants.otpVerify;
+      final payload = purpose == 'change_email'
+          ? {
+              'email': email.trim().toLowerCase(),
+              'code': code.trim(),
+            }
+          : {
+              'email': email.trim().toLowerCase(),
+              'code': code.trim(),
+              'purpose': purpose,
+            };
+      final response = await _authPost(path, data: payload);
       final data = response.data as Map<String, dynamic>;
       final token = data['verificationToken']?.toString() ?? '';
       if (token.isEmpty) {
-        return const OtpVerifyResult(
+        return OtpVerifyResult(
           success: false,
-          error: 'Verification failed. Try again.',
+          error: await _localized('authVerificationFailed'),
         );
       }
       return OtpVerifyResult(success: true, verificationToken: token);
     } on DioException catch (error) {
+      final parsed = await _messageFromDio(error, fallbackKey: 'otpInvalid');
       return OtpVerifyResult(
         success: false,
-        error: _messageFromDio(error, fallback: 'Incorrect or expired OTP.'),
+        error: parsed.message,
+        retryAfterSeconds: parsed.retryAfterSeconds,
       );
     } catch (_) {
-      return const OtpVerifyResult(
+      return OtpVerifyResult(
         success: false,
-        error: 'Incorrect or expired OTP.',
+        error: await _localized('otpInvalid'),
       );
     }
   }
@@ -244,24 +383,35 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required String phone,
     required String email,
     required String password,
-    required String phoneVerificationToken,
+    required String emailVerificationToken,
+    required bool termsAccepted,
+    required bool privacyAccepted,
+    required bool sensitiveProcessingConsent,
   }) async {
     final trimmedName = fullName.trim();
     final trimmedPhone = phone.trim();
-    final trimmedEmail = email.trim();
-    final trimmedPassword = password.trim();
+    final trimmedEmail = email.trim().toLowerCase();
 
     if (trimmedName.length < 2 ||
         trimmedPhone.length < 8 ||
-        trimmedPassword.length < 8) {
+        trimmedEmail.isEmpty ||
+        !termsAccepted ||
+        !privacyAccepted ||
+        !sensitiveProcessingConsent) {
       state = state.copyWith(
-        error: 'Please fill all required fields (password at least 8 characters).',
+        error: await _localized('authFillRequiredFields'),
       );
       return false;
     }
 
-    if (phoneVerificationToken.isEmpty) {
-      state = state.copyWith(error: 'Verify your phone number with OTP first.');
+    final strength = PasswordStrength.evaluate(password);
+    if (!strength.isAcceptable) {
+      state = state.copyWith(error: await _localized('authPasswordRequirements'));
+      return false;
+    }
+
+    if (emailVerificationToken.isEmpty) {
+      state = state.copyWith(error: await _localized('verifyEmailFirst'));
       return false;
     }
 
@@ -270,45 +420,46 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final payload = <String, dynamic>{
         'fullName': trimmedName,
         'phone': trimmedPhone,
-        'password': trimmedPassword,
-        'phoneVerificationToken': phoneVerificationToken,
+        'email': trimmedEmail,
+        'password': password,
+        'emailVerificationToken': emailVerificationToken,
+        'termsAccepted': true,
+        'privacyAccepted': true,
+        'sensitiveProcessingConsent': sensitiveProcessingConsent,
+        ...(await _devicePayload()),
       };
-      if (trimmedEmail.isNotEmpty) {
-        payload['email'] = trimmedEmail;
-      }
 
       final response = await _authPost(ApiConstants.register, data: payload);
       await _applyAuthResponse(response.data as Map<String, dynamic>);
+      TextInput.finishAutofillContext(shouldSave: true);
       return true;
     } on DioException catch (error) {
       state = state.copyWith(
         isLoading: false,
-        error: _messageFromDio(
-          error,
-          fallback: 'Signup failed. Please try again.',
-        ),
+        error: (await _messageFromDio(error, fallbackKey: 'authSignupFailed')).message,
       );
       return false;
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
-        error: 'Signup failed. Please try again.',
+        error: await _localized('authSignupFailed'),
       );
       return false;
     }
   }
 
-  Future<OtpSendResult> sendForgotPasswordOtp(String phone) {
-    return sendOtp(phone: phone, purpose: 'reset_password');
+  Future<OtpSendResult> sendForgotPasswordOtp(String email) {
+    return sendOtp(email: email, purpose: 'reset_password');
   }
 
   Future<bool> resetPassword({
-    required String phone,
+    required String email,
     required String code,
     required String newPassword,
   }) async {
-    if (newPassword.trim().length < 8) {
-      state = state.copyWith(error: 'Password must be at least 8 characters.');
+    final strength = PasswordStrength.evaluate(newPassword);
+    if (!strength.isAcceptable) {
+      state = state.copyWith(error: await _localized('authPasswordRequirements'));
       return false;
     }
 
@@ -317,47 +468,168 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final response = await _authPost(
         ApiConstants.resetPassword,
         data: {
-          'phone': phone.trim(),
+          'email': email.trim().toLowerCase(),
           'code': code.trim(),
-          'newPassword': newPassword.trim(),
+          'newPassword': newPassword,
         },
       );
       await _applyAuthResponse(response.data as Map<String, dynamic>);
+      TextInput.finishAutofillContext(shouldSave: true);
       return true;
     } on DioException catch (error) {
       state = state.copyWith(
         isLoading: false,
-        error: _messageFromDio(
+        error: (await _messageFromDio(
           error,
-          fallback: 'Could not reset password. Try again.',
-        ),
+          fallbackKey: 'authResetPasswordFailed',
+        )).message,
       );
       return false;
     } catch (_) {
       state = state.copyWith(
         isLoading: false,
-        error: 'Could not reset password. Try again.',
+        error: await _localized('authResetPasswordFailed'),
       );
       return false;
     }
   }
 
-  Future<void> logout() async {
+  Future<List<AuthSessionInfo>> fetchSessions() async {
+    final deviceId = await DeviceIdentity.deviceId();
+    final response = await _dio.get(
+      ApiConstants.authSessions,
+      queryParameters: {'currentDeviceId': deviceId},
+    );
+    final data = response.data as Map<String, dynamic>;
+    final sessions = (data['sessions'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(AuthSessionInfo.fromJson)
+        .toList(growable: false);
+    return sessions;
+  }
+
+  Future<void> revokeSession(String sessionId) async {
+    final deviceId = await DeviceIdentity.deviceId();
+    await _dio.delete(
+      '${ApiConstants.authSessions}/$sessionId',
+      data: {'currentDeviceId': deviceId},
+    );
+  }
+
+  Future<int> revokeOtherSessions() async {
+    final deviceId = await DeviceIdentity.deviceId();
+    final response = await _dio.post(
+      ApiConstants.authSessionsRevokeOthers,
+      data: {'currentDeviceId': deviceId},
+    );
+    return (response.data['revokedCount'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<int> revokeAllSessions() async {
+    final response = await _dio.post(ApiConstants.authSessionsRevokeAll);
+    return (response.data['revokedCount'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<Map<String, dynamic>> exportAccountData({required String password}) async {
+    final response = await _dio.post(
+      ApiConstants.profileExport,
+      data: {'password': password},
+    );
+    final data = response.data;
+    if (data is Map<String, dynamic>) return data;
+    return jsonDecode(jsonEncode(data)) as Map<String, dynamic>;
+  }
+
+  Future<void> deleteLocationData({required String password}) async {
+    await _dio.delete(
+      ApiConstants.profileDeleteLocation,
+      data: {'password': password},
+    );
+  }
+
+  Future<void> deleteMedicalData({required String password}) async {
+    await _dio.delete(
+      ApiConstants.profileDeleteMedical,
+      data: {'password': password},
+    );
+  }
+
+  Future<void> deleteIncidentData({required String password}) async {
+    await _dio.delete(
+      ApiConstants.profileDeleteIncidents,
+      data: {'password': password},
+    );
+  }
+
+  Future<void> deleteEvidenceData({required String password}) async {
+    await _dio.delete(
+      ApiConstants.profileDeleteEvidence,
+      data: {'password': password},
+    );
+  }
+
+  Future<void> deleteAccount({required String password}) async {
+    await _dio.delete(
+      ApiConstants.profileDeleteAccount,
+      data: {'confirmText': 'DELETE', 'password': password},
+    );
+    await logout();
+  }
+
+  Future<OtpSendResult> requestEmailChange({
+    required String email,
+    required String password,
+  }) async {
     try {
-      final refreshToken = await _storage.read(
-        key: AuthTokenStorage.refreshTokenKey,
+      final response = await _dio.post(
+        ApiConstants.profileEmailRequestChange,
+        data: {
+          'email': email.trim().toLowerCase(),
+          'password': password,
+        },
       );
-      if (refreshToken != null && refreshToken.isNotEmpty) {
-        await _authPost(
-          ApiConstants.logout,
-          data: {'refreshToken': refreshToken},
-        );
+      final data = response.data;
+      if (data is Map && data['unchanged'] == true) {
+        return const OtpSendResult(success: true, resendAfterSeconds: 0);
       }
+      final resend = (data is Map ? data['resendAfterSeconds'] as num? : null)?.toInt() ?? 60;
+      return OtpSendResult(success: true, resendAfterSeconds: resend);
+    } on DioException catch (error) {
+      return OtpSendResult(
+        success: false,
+        error: (await _messageFromDio(error, fallbackKey: 'otpSendFailed')).message,
+      );
     } catch (_) {
-      // Always clear local session even if server logout fails.
+      return OtpSendResult(
+        success: false,
+        error: await _localized('otpSendFailed'),
+      );
     }
+  }
+
+  Future<void> logout() async {
+    final userId = state.user?.id;
+    final refreshToken = await _storage.read(
+      key: AuthTokenStorage.refreshTokenKey,
+    );
+
+    await ProfileSessionCache.clearAll(userId: userId);
+    if (userId != null && userId.isNotEmpty) {
+      await MedicalVaultStorage.clearForUser(userId);
+    }
+    await PoshComplaintDraftStorage().clear();
+    await CyberVaultLock().disable();
     await _clearStoredCredentials();
     state = AuthState(isInitializing: false);
+
+    if (refreshToken == null || refreshToken.isEmpty) return;
+
+    try {
+      await _authPost(
+        ApiConstants.logout,
+        data: {'refreshToken': refreshToken},
+      ).timeout(const Duration(seconds: 12));
+    } catch (_) {}
   }
 
   void updateUser(UserModel user) {
@@ -381,6 +653,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     );
 
     final user = UserModel.fromJson(data);
+    await ProfileSessionCache.syncFromUser(user);
     state = state.copyWith(
       isInitializing: false,
       isLoading: false,
@@ -403,38 +676,112 @@ class AuthNotifier extends StateNotifier<AuthState> {
     Future<Response<dynamic>> send() => _dio.post(
       path,
       data: data,
-      options: Options(extra: const {'skipAuthRefresh': true}),
+      options: Options(
+        extra: const {'skipAuthRefresh': true},
+        sendTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 75),
+      ),
     );
 
     try {
-      return await send();
+      return await send().timeout(const Duration(seconds: 80));
     } on DioException catch (error) {
       if (!BackendUrlResolver.isConnectionError(error)) rethrow;
       await BackendUrlResolver.clearOverride();
       if (await NetworkManager.instance.recoverConnection()) {
         _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
-        return send();
+        return send().timeout(const Duration(seconds: 80));
       }
       rethrow;
+    } on TimeoutException {
+      throw DioException(
+        requestOptions: RequestOptions(path: path),
+        type: DioExceptionType.receiveTimeout,
+      );
     }
   }
 
-  String _messageFromDio(DioException error, {required String fallback}) {
+  Future<_AuthMessage> _messageFromDio(
+    DioException error, {
+    required String fallbackKey,
+  }) async {
     final data = error.response?.data;
+    var message = '';
     if (data is Map && data['message'] != null) {
-      final message = data['message'].toString().trim();
-      if (message.isNotEmpty) return message;
+      message = data['message'].toString().trim();
     }
+
+    final retryAfterSeconds = _retryAfterSeconds(error, message);
+
+    if (message.isNotEmpty) {
+      message = _sanitizeAuthMessage(message);
+      if (retryAfterSeconds != null) {
+        message = await _localized(
+          'authRetryAfterSeconds',
+          params: {'seconds': '$retryAfterSeconds', 'message': message},
+        );
+      }
+      return _AuthMessage(message: message, retryAfterSeconds: retryAfterSeconds);
+    }
+
     if (error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.receiveTimeout ||
         error.type == DioExceptionType.sendTimeout) {
       final base = NetworkManager.instance.currentBaseUrl;
-      return 'Request timed out. Check your connection and try again.\nServer: $base';
+      return _AuthMessage(
+        message: await _localized('authRequestTimedOut', params: {'server': base}),
+      );
+    }
+    if (error.response?.statusCode == 503) {
+      final responseData = error.response?.data;
+      if (responseData is Map && responseData['code'] == 'DATABASE_UNAVAILABLE') {
+        return _AuthMessage(message: await _localized('authDatabaseUnavailable'));
+      }
+    }
+    if (error.response?.statusCode == 429) {
+      final seconds = retryAfterSeconds ?? 60;
+      return _AuthMessage(
+        message: await _localized('authTooManyRequests', params: {'seconds': '$seconds'}),
+        retryAfterSeconds: seconds,
+      );
     }
     if (error.type == DioExceptionType.connectionError) {
       final base = NetworkManager.instance.currentBaseUrl;
-      return 'Could not reach server at $base. Ensure backend is running and phone/PC use the same Wi‑Fi.';
+      return _AuthMessage(
+        message: await _localized('authCouldNotReachServer', params: {'server': base}),
+      );
     }
-    return fallback;
+    return _AuthMessage(message: await _localized(fallbackKey));
   }
+
+  int? _retryAfterSeconds(DioException error, String message) {
+    final header = error.response?.headers.value('retry-after');
+    if (header != null) {
+      final parsed = int.tryParse(header);
+      if (parsed != null) return parsed;
+    }
+
+    final waitMatch = RegExp(r'wait (\d+)s', caseSensitive: false).firstMatch(message);
+    if (waitMatch != null) {
+      return int.tryParse(waitMatch.group(1)!);
+    }
+    return null;
+  }
+
+  String _sanitizeAuthMessage(String message) {
+    final lower = message.toLowerCase();
+    if (lower.contains('phone already registered') ||
+        lower.contains('no account found') ||
+        lower.contains('email already registered')) {
+      return 'If this number is eligible, follow the on-screen steps or try signing in.';
+    }
+    return message;
+  }
+}
+
+class _AuthMessage {
+  const _AuthMessage({required this.message, this.retryAfterSeconds});
+
+  final String message;
+  final int? retryAfterSeconds;
 }

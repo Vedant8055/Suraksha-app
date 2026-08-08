@@ -1,3 +1,5 @@
+import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
+
 class ScamAnalysisResult {
   final String riskLevel;
   final String threatSummary;
@@ -18,7 +20,7 @@ class ScamAnalysisResult {
   factory ScamAnalysisResult.fromJson(Map<String, dynamic> json) {
     return ScamAnalysisResult(
       riskLevel: json['riskLevel']?.toString() ?? 'LOW',
-      threatSummary: json['threatSummary']?.toString() ?? 'No summary available.',
+      threatSummary: json['threatSummary']?.toString() ?? l10nSync('cyberNoSummaryAvailable'),
       recommendedActions: (json['recommendedActions'] as List? ?? const [])
           .map((item) => item.toString())
           .toList(),
@@ -48,8 +50,26 @@ class CyberReportResult {
       firStyleReport:
           json['firStyleReport']?.toString() ??
           json['complaintSummary']?.toString() ??
-          'Report generated.',
+          l10nSync('cyberReportGenerated'),
       pdfBase64: json['pdfBase64']?.toString(),
+    );
+  }
+}
+
+class CyberAcknowledgementEntry {
+  final String number;
+  final DateTime savedAt;
+
+  const CyberAcknowledgementEntry({
+    required this.number,
+    required this.savedAt,
+  });
+
+  factory CyberAcknowledgementEntry.fromJson(Map<String, dynamic> json) {
+    return CyberAcknowledgementEntry(
+      number: json['number']?.toString() ?? '',
+      savedAt: DateTime.tryParse(json['savedAt']?.toString() ?? '') ??
+          DateTime.now(),
     );
   }
 }
@@ -63,6 +83,7 @@ class CyberReportListItem {
   final String status;
   final String? portalAcknowledgementNumber;
   final DateTime? filedOnPortalAt;
+  final List<CyberAcknowledgementEntry> acknowledgementHistory;
   final String? firStyleReport;
   final String? pdfBase64;
   final DateTime createdAt;
@@ -76,6 +97,7 @@ class CyberReportListItem {
     required this.status,
     this.portalAcknowledgementNumber,
     this.filedOnPortalAt,
+    this.acknowledgementHistory = const [],
     this.firStyleReport,
     this.pdfBase64,
     required this.createdAt,
@@ -84,7 +106,7 @@ class CyberReportListItem {
   List<String> get allCategories {
     if (categories.isNotEmpty) return categories;
     if (category.trim().isNotEmpty) return [category];
-    return const ['Cyber Report'];
+    return [l10nSync('cyberReportDefaultTitle')];
   }
 
   factory CyberReportListItem.fromJson(Map<String, dynamic> json) {
@@ -92,19 +114,30 @@ class CyberReportListItem {
         .map((item) => item.toString())
         .where((item) => item.trim().isNotEmpty)
         .toList(growable: false);
-    final primaryCategory = json['category']?.toString() ?? 'Cyber Report';
+    final primaryCategory =
+        json['category']?.toString() ?? l10nSync('cyberReportDefaultTitle');
+    final history = (json['acknowledgementHistory'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (item) => CyberAcknowledgementEntry.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .where((item) => item.number.trim().isNotEmpty)
+        .toList(growable: false);
     return CyberReportListItem(
       id: (json['_id'] ?? json['id'] ?? '').toString(),
       category: primaryCategory,
       categories: rawCategories.isNotEmpty ? rawCategories : [primaryCategory],
       description: json['description']?.toString() ?? '',
       isDraft: json['isDraft'] == true,
-      status: json['status']?.toString() ?? 'Reported',
+      status: json['status']?.toString() ?? l10nSync('cyberReportedStatus'),
       portalAcknowledgementNumber:
           json['portalAcknowledgementNumber']?.toString(),
       filedOnPortalAt: DateTime.tryParse(
         json['filedOnPortalAt']?.toString() ?? '',
       ),
+      acknowledgementHistory: history,
       firStyleReport: json['firStyleReport']?.toString(),
       pdfBase64: json['pdfBase64']?.toString(),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
@@ -169,8 +202,8 @@ class EvidenceItem {
   factory EvidenceItem.fromJson(Map<String, dynamic> json) {
     return EvidenceItem(
       id: (json['_id'] ?? json['id'] ?? '').toString(),
-      title: json['title']?.toString() ?? 'Evidence',
-      category: json['category']?.toString() ?? 'Other',
+      title: json['title']?.toString() ?? l10nSync('cyberEvidenceLabel'),
+      category: json['category']?.toString() ?? l10nSync('cyberOtherCategory'),
       encrypted: json['encrypted'] != false,
       privateMode: json['privateMode'] == true,
       uploadedAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
@@ -208,7 +241,7 @@ class DeepfakeResources {
 
   factory DeepfakeResources.fromJson(Map<String, dynamic> json) {
     return DeepfakeResources(
-      title: json['title']?.toString() ?? 'Deepfake Awareness',
+      title: json['title']?.toString() ?? l10nSync('cyberDeepfakeAwareness'),
       sections: (json['sections'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => InfoSection.fromJson(Map<String, dynamic>.from(item)))
@@ -229,7 +262,7 @@ class HelplineEntry {
 
   factory HelplineEntry.fromJson(Map<String, dynamic> json) {
     return HelplineEntry(
-      label: json['label']?.toString() ?? 'Helpline',
+      label: json['label']?.toString() ?? l10nSync('cyberHelpline'),
       value: json['value']?.toString() ?? '',
     );
   }
@@ -243,7 +276,7 @@ class InfoSection {
 
   factory InfoSection.fromJson(Map<String, dynamic> json) {
     return InfoSection(
-      title: json['title']?.toString() ?? 'Information',
+      title: json['title']?.toString() ?? l10nSync('cyberInformation'),
       body: json['body']?.toString() ?? '',
     );
   }

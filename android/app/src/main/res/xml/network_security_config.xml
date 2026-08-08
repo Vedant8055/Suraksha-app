@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Release builds keep cleartext disabled via AndroidManifest. -->
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">10.0.3.2</domain>
+    </domain-config>
+    <!-- Pin GTS WE1 intermediate for the production API host. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">suraksha-backend-gtdi.onrender.com</domain>
+        <pin-set expiration="2029-02-20">
+            <!-- Google Trust Services WE1 SPKI -->
+            <pin digest="SHA-256">kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=</pin>
+            <!-- Backup: GTS Root R4 SPKI (public root) -->
+            <pin digest="SHA-256">mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=</pin>
+        </pin-set>
+    </domain-config>
+</network-security-config>

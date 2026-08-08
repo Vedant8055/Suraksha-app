@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_session_cache.dart';
+import 'package:suraksha_women_safety_app/models/user_model.dart';
 
 class ProfileDisplayState {
   final String name;
@@ -21,17 +23,25 @@ final profileDisplayProvider =
     );
 
 class ProfileDisplayNotifier extends StateNotifier<ProfileDisplayState> {
-  static const String _localNameKey = 'profile_local_name_v1';
-  static const String _localPhotoPathKey = 'profile_local_photo_path_v1';
-
   ProfileDisplayNotifier() : super(const ProfileDisplayState());
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     state = state.copyWith(
-      name: prefs.getString(_localNameKey)?.trim() ?? '',
-      photoPath: prefs.getString(_localPhotoPathKey)?.trim() ?? '',
+      name: await ProfileSessionCache.readDisplayName(),
+      photoPath:
+          prefs.getString(ProfileSessionCache.photoPathKey)?.trim() ?? '',
     );
+  }
+
+  Future<void> clear() async {
+    await ProfileSessionCache.clearAll();
+    state = const ProfileDisplayState();
+  }
+
+  Future<void> applyUser(UserModel user) async {
+    await ProfileSessionCache.syncFromUser(user);
+    state = ProfileDisplayState(name: user.name.trim());
   }
 
   Future<void> update({String? name, String? photoPath}) async {
@@ -39,16 +49,19 @@ class ProfileDisplayNotifier extends StateNotifier<ProfileDisplayState> {
 
     if (name != null) {
       final normalizedName = name.trim();
-      await prefs.setString(_localNameKey, normalizedName);
+      await ProfileSessionCache.writeDisplayName(normalizedName);
       state = state.copyWith(name: normalizedName);
     }
 
     if (photoPath != null) {
       final normalizedPhotoPath = photoPath.trim();
       if (normalizedPhotoPath.isEmpty) {
-        await prefs.remove(_localPhotoPathKey);
+        await prefs.remove(ProfileSessionCache.photoPathKey);
       } else {
-        await prefs.setString(_localPhotoPathKey, normalizedPhotoPath);
+        await prefs.setString(
+          ProfileSessionCache.photoPathKey,
+          normalizedPhotoPath,
+        );
       }
       state = state.copyWith(photoPath: normalizedPhotoPath);
     }

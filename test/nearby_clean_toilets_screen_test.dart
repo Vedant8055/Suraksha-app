@@ -91,14 +91,10 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Sanitation registry returned no published toilets here.'),
-      findsOneWidget,
-    );
-    expect(
-      find.textContaining('toilet service is connected'),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('empty-hint-toggle')), findsOneWidget);
+    expect(find.text('No toilets found in this area.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('empty-hint-toggle')));
+    await tester.pumpAndSettle();
     expect(find.text('Increase radius'), findsOneWidget);
     expect(find.text('Open map'), findsOneWidget);
   });

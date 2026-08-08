@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/cybercrime_constants.dart';
@@ -17,6 +16,7 @@ import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cyber_mult
 import 'package:suraksha_women_safety_app/features/cybercrime/widgets/cybercrime_widgets.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
 import 'package:suraksha_women_safety_app/theme/app_theme.dart';
+import 'dart:typed_data';
 
 class CyberVaultTab extends StatefulWidget {
   const CyberVaultTab({
@@ -47,9 +47,6 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
   bool _isLoading = true;
   bool _isUploading = false;
   bool _isExporting = false;
-  bool _lockEnabled = false;
-  bool _biometricsAvailable = false;
-  bool _viewUnlocked = true;
   double? _uploadProgress;
   CancelToken? _uploadCancelToken;
 
@@ -69,14 +66,11 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
   }
 
   Future<void> _bootstrap() async {
-    final enabled = await _vaultLock.isEnabled();
-    final biometrics = await _vaultLock.canUseBiometrics();
+    // Clear any previously enabled viewing lock so preview/download are not blocked.
+    try {
+      await _vaultLock.disable();
+    } catch (_) {}
     if (!mounted) return;
-    setState(() {
-      _lockEnabled = enabled;
-      _biometricsAvailable = biometrics;
-      _viewUnlocked = !enabled;
-    });
     await _load();
   }
 
@@ -130,163 +124,6 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<bool> _ensureViewUnlocked() async {
-    if (!_lockEnabled || _viewUnlocked) return true;
-    final l10n = AppLocalizations.of(context);
-
-    if (_biometricsAvailable) {
-      final bioOk = await _vaultLock.authenticateBiometric(
-        reason: l10n.t('cyberVaultBiometricReason'),
-      );
-      if (!mounted) return false;
-      if (bioOk) {
-        setState(() => _viewUnlocked = true);
-        return true;
-      }
-    }
-
-    if (!mounted) return false;
-    final controller = TextEditingController();
-    final pin = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.t('cyberVaultUnlockTitle')),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(8),
-          ],
-          decoration: InputDecoration(labelText: l10n.t('medicalPinLabel')),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(l10n.t('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text(l10n.t('cyberVaultUnlockAction')),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (pin == null || pin.isEmpty || !mounted) return false;
-
-    final ok = await _vaultLock.verifyPin(pin);
-    if (!ok) {
-      if (!mounted) return false;
-      showCyberSnack(context, l10n.t('cyberVaultPinIncorrect'));
-      return false;
-    }
-    setState(() => _viewUnlocked = true);
-    return true;
-  }
-
-  Future<void> _setupOrClearLock() async {
-    final l10n = AppLocalizations.of(context);
-    if (_lockEnabled) {
-      final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: Text(l10n.t('cyberVaultDisableLock')),
-              content: Text(l10n.t('cyberVaultLockSubtitle')),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: Text(l10n.t('cancel')),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  child: Text(l10n.t('cyberVaultDisableLock')),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-      if (!confirmed) return;
-      await _vaultLock.disable();
-      if (!mounted) return;
-      setState(() {
-        _lockEnabled = false;
-        _viewUnlocked = true;
-      });
-      showCyberSnack(context, l10n.t('cyberVaultLockDisabled'));
-      return;
-    }
-
-    final controller = TextEditingController();
-    final confirmController = TextEditingController();
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.t('cyberVaultSetPinTitle')),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(l10n.t('cyberVaultLockSubtitle')),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              obscureText: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(8),
-              ],
-              decoration: InputDecoration(labelText: l10n.t('medicalPinLabel')),
-            ),
-            TextField(
-              controller: confirmController,
-              obscureText: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(8),
-              ],
-              decoration: InputDecoration(
-                labelText: l10n.t('cyberVaultConfirmPinLabel'),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(l10n.t('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(l10n.t('cyberVaultEnableLock')),
-          ),
-        ],
-      ),
-    );
-    final pin = controller.text.trim();
-    final confirm = confirmController.text.trim();
-    controller.dispose();
-    confirmController.dispose();
-    if (saved != true || !mounted) return;
-    if (pin.length < 4) {
-      showCyberSnack(context, l10n.t('medicalPinLabel'));
-      return;
-    }
-    if (pin != confirm) {
-      showCyberSnack(context, l10n.t('cyberVaultPinMismatch'));
-      return;
-    }
-    await _vaultLock.enablePin(pin);
-    if (!mounted) return;
-    setState(() {
-      _lockEnabled = true;
-      _viewUnlocked = false;
-    });
-    showCyberSnack(context, l10n.t('cyberVaultLockEnabled'));
   }
 
   Future<bool> _confirmUploadMetadata({
@@ -441,22 +278,34 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
 
   Future<void> _previewEvidence(EvidenceItem item) async {
     final l10n = AppLocalizations.of(context);
-    if (!await _ensureViewUnlocked()) return;
     try {
       final downloaded = await widget.service.downloadEvidence(item.id);
       if (!mounted) return;
-      if (downloaded.mimeType.startsWith('image/')) {
-        await showDialog<void>(
-          context: context,
-          builder: (context) => Dialog(
-            child: InteractiveViewer(
-              child: Image.memory(
-                Uint8List.fromList(downloaded.bytes),
-                fit: BoxFit.contain,
+      final mime = downloaded.mimeType.split(';').first.trim().toLowerCase();
+      if (mime.startsWith('image/')) {
+        try {
+          await showDialog<void>(
+            context: context,
+            builder: (context) => Dialog(
+              child: InteractiveViewer(
+                child: Image.memory(
+                  Uint8List.fromList(downloaded.bytes),
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(l10n.t('previewFailed')),
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-        );
+          );
+        } catch (_) {
+          if (mounted) {
+            showCyberSnack(context, l10n.t('previewFailed'));
+          }
+        }
         return;
       }
       await shareDownloadedEvidence(context, downloaded);
@@ -473,7 +322,6 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
 
   Future<void> _downloadEvidence(EvidenceItem item) async {
     final l10n = AppLocalizations.of(context);
-    if (!await _ensureViewUnlocked()) return;
     try {
       final downloaded = await widget.service.downloadEvidence(item.id);
       if (!mounted) return;
@@ -528,7 +376,6 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
 
   Future<void> _exportPackage() async {
     final l10n = AppLocalizations.of(context);
-    if (!await _ensureViewUnlocked()) return;
     setState(() => _isExporting = true);
     try {
       final payload = await widget.service.exportVaultPackage();
@@ -733,44 +580,6 @@ class _CyberVaultTabState extends State<CyberVaultTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               CyberCardTitle(l10n.t('manageVault')),
-              Text(
-                l10n.t('cyberVaultLockTitle'),
-                style: TextStyle(
-                  color: isLight
-                      ? PremiumCyberTheme.titleText
-                      : Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                l10n.t('cyberVaultLockSubtitle'),
-                style: TextStyle(
-                  color: isLight
-                      ? PremiumCyberTheme.bodyText
-                      : Colors.white70,
-                  fontSize: 12.5,
-                  height: 1.35,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _setupOrClearLock,
-                  icon: Icon(
-                    _lockEnabled
-                        ? Icons.lock_open_rounded
-                        : Icons.lock_rounded,
-                  ),
-                  label: Text(
-                    _lockEnabled
-                        ? l10n.t('cyberVaultDisableLock')
-                        : l10n.t('cyberVaultEnableLock'),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
               CyberTextInput(
                 controller: _searchController,
                 label: l10n.t('searchVault'),

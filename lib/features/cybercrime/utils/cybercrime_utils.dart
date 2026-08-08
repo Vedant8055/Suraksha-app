@@ -55,11 +55,48 @@ Future<bool> showCyberAuthExpiredBanner(
 String friendlyCyberError(BuildContext context, DioException error) {
   final status = error.response?.statusCode;
   final data = error.response?.data;
-  final message = data is Map ? data['message']?.toString() : null;
-  if (message != null && message.isNotEmpty) return message;
+  String? message;
+  if (data is Map) {
+    message = data['message']?.toString();
+  } else if (data is List<int>) {
+    try {
+      final decoded = jsonDecode(String.fromCharCodes(data));
+      if (decoded is Map) message = decoded['message']?.toString();
+    } catch (_) {}
+  } else if (data is String && data.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(data);
+      if (decoded is Map) {
+        message = decoded['message']?.toString();
+      } else {
+        message = data;
+      }
+    } catch (_) {
+      message = data;
+    }
+  }
+  if (message == null || message.isEmpty) {
+    message = error.message;
+  }
+  if (message != null && message.isNotEmpty) {
+    final lower = message.toLowerCase();
+    if (lower.contains('evidence file not found') ||
+        lower.contains('file not found')) {
+      return AppLocalizations.of(context).t('cyberEvidenceServerMissing');
+    }
+    if (lower.contains('decrypt')) {
+      return AppLocalizations.of(context).t('cyberEvidenceDecryptFailed');
+    }
+    // Prefer server message when it is already human-readable.
+    if (!lower.contains('dioexception') && !lower.startsWith('http')) {
+      return message;
+    }
+  }
   final l10n = AppLocalizations.of(context);
   if (status == 401) return l10n.t('networkServerIssue');
+  if (status == 404) return l10n.t('cyberEvidenceServerMissing');
   if (status == 413) return l10n.t('fileTooLarge10Mb');
+  if (status == 422) return l10n.t('cyberEvidenceDecryptFailed');
   if (BackendUrlResolver.isConnectionError(error)) {
     return l10n.t('cannotReachServer');
   }

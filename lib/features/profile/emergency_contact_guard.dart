@@ -9,6 +9,11 @@ Future<bool> hasSavedEmergencyContacts(WidgetRef ref) {
   return ref.read(emergencyContactsProvider.notifier).hasSavedContacts();
 }
 
+/// `null` = contacts not ready to evaluate yet (do not show missing-contact UI).
+Future<bool?> hasSavedEmergencyContactsResolved(WidgetRef ref) {
+  return ref.read(emergencyContactsProvider.notifier).hasSavedContactsResolved();
+}
+
 Future<void> showMissingEmergencyContactsDialog(
   BuildContext context, {
   bool barrierDismissible = true,

@@ -89,28 +89,34 @@ class _MyAppState extends ConsumerState<MyApp> {
     WidgetsBinding.instance.addObserver(_lifecycleHandler);
     NotificationNavigation.onOpen = _onNotificationOpened;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _syncSafetySummaryLanguage(ref.read(appLocaleProvider));
-      final auth = ref.read(authProvider);
-      if (auth.isAuthenticated && auth.user != null) {
-        unawaited(
-          ref.read(profileDisplayProvider.notifier).applyUser(auth.user!),
-        );
-        unawaited(
-          ref.read(emergencyContactsProvider.notifier).bindUser(auth.user!.id),
-        );
-        unawaited(
-          PushNotificationService.instance.registerTokenIfAuthenticated(),
-        );
-        unawaited(_maybeShowNotificationOnboarding());
-      } else if (auth.token != null && auth.token!.isNotEmpty) {
-        unawaited(
-          PushNotificationService.instance.registerTokenIfAuthenticated(),
-        );
-      }
-      NotificationNavigation.flushPending();
-      unawaited(_checkMissingEmergencyContactsReminder());
+      unawaited(_bootstrapAuthenticatedSession());
     });
+  }
+
+  Future<void> _bootstrapAuthenticatedSession() async {
+    if (!mounted) return;
+    _syncSafetySummaryLanguage(ref.read(appLocaleProvider));
+    final auth = ref.read(authProvider);
+    if (auth.isAuthenticated && auth.user != null) {
+      unawaited(
+        ref.read(profileDisplayProvider.notifier).applyUser(auth.user!),
+      );
+      // Bind contacts first so the missing-contact reminder never races an empty list.
+      await ref
+          .read(emergencyContactsProvider.notifier)
+          .bindUser(auth.user!.id);
+      if (!mounted) return;
+      unawaited(
+        PushNotificationService.instance.registerTokenIfAuthenticated(),
+      );
+      unawaited(_maybeShowNotificationOnboarding());
+    } else if (auth.token != null && auth.token!.isNotEmpty) {
+      unawaited(
+        PushNotificationService.instance.registerTokenIfAuthenticated(),
+      );
+    }
+    NotificationNavigation.flushPending();
+    await _checkMissingEmergencyContactsReminder();
   }
 
   @override
@@ -141,15 +147,16 @@ class _MyAppState extends ConsumerState<MyApp> {
           ref.read(profileDisplayProvider.notifier).applyUser(next.user!),
         );
         unawaited(
-          ref
-              .read(emergencyContactsProvider.notifier)
-              .bindUser(next.user!.id),
-        );
-        unawaited(
           ref.read(routeSafetyProvider.notifier).bindUser(next.user!.id),
         );
         _startBackgroundServicesIfNeeded();
-        unawaited(_checkMissingEmergencyContactsReminder());
+        unawaited(() async {
+          await ref
+              .read(emergencyContactsProvider.notifier)
+              .bindUser(next.user!.id);
+          if (!mounted) return;
+          await _checkMissingEmergencyContactsReminder();
+        }());
         unawaited(_maybeShowNotificationOnboarding());
       }
       if (wasAuthenticated && !next.isAuthenticated) {
@@ -320,10 +327,17 @@ class _MyAppState extends ConsumerState<MyApp> {
   Future<void> _checkMissingEmergencyContactsReminder() async {
     if (!mounted) return;
     final auth = ref.read(authProvider);
-    if (!auth.isAuthenticated) return;
+    if (!auth.isAuthenticated || auth.user == null) return;
 
-    final hasContacts = await hasSavedEmergencyContacts(ref);
-    if (!mounted || hasContacts) return;
+    // Ensure the active user's contacts are bound/loaded before deciding.
+    final contactsNotifier = ref.read(emergencyContactsProvider.notifier);
+    if (contactsNotifier.activeUserId != auth.user!.id) {
+      await contactsNotifier.bindUser(auth.user!.id);
+    }
+
+    final hasContacts = await hasSavedEmergencyContactsResolved(ref);
+    // null => still not evaluable; true => contacts exist. Only remind when false.
+    if (!mounted || hasContacts != false) return;
 
     _presentMissingEmergencyContactsReminder();
   }

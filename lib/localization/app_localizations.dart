@@ -388,6 +388,10 @@ class AppLocalizations {
       'loginRequiredCyber': 'Please login again to use secure cyber features.',
       'fileTooLarge10Mb': 'File is too large. Maximum upload size is 10 MB.',
       'networkServerIssue': 'Network or server issue. Please try again.',
+      'cyberEvidenceDecryptFailed':
+          'Could not open this encrypted file. Try re-uploading it.',
+      'cyberEvidenceServerMissing':
+          'Evidence file is missing on the server. Please re-upload this item.',
       'couldNotSharePdf': 'Could not share PDF. Please try again.',
       'couldNotExportEvidence': 'Could not export evidence package.',
       'riskLevel': 'Risk Level',
@@ -2078,6 +2082,10 @@ class AppLocalizations {
       'loginRequiredCyber': 'सुरक्षित साइबर सुविधाओं के लिए फिर लॉगिन करें।',
       'fileTooLarge10Mb': 'फ़ाइल बहुत बड़ी है। अधिकतम 10 MB।',
       'networkServerIssue': 'नेटवर्क या सर्वर समस्या। फिर प्रयास करें।',
+      'cyberEvidenceDecryptFailed':
+          'यह एन्क्रिप्टेड फ़ाइल नहीं खोली जा सकी। फिर अपलोड करें।',
+      'cyberEvidenceServerMissing':
+          'सर्वर पर साक्ष्य फ़ाइल नहीं मिली। कृपया इसे फिर अपलोड करें।',
       'couldNotSharePdf': 'PDF साझा नहीं हो सका।',
       'couldNotExportEvidence': 'साक्ष्य पैकेज निर्यात नहीं हो सका।',
       'riskLevel': 'जोखिम स्तर',
@@ -3579,6 +3587,10 @@ class AppLocalizations {
       'loginRequiredCyber': 'सुरक्षित सायबर वैशिष्ट्यांसाठी पुन्हा लॉगिन करा.',
       'fileTooLarge10Mb': 'फाइल खूप मोठी आहे. कमाल 10 MB.',
       'networkServerIssue': 'नेटवर्क किंवा सर्व्हर समस्या. पुन्हा प्रयत्न करा.',
+      'cyberEvidenceDecryptFailed':
+          'ही एन्क्रिप्टेड फाइल उघडता आली नाही. पुन्हा अपलोड करा.',
+      'cyberEvidenceServerMissing':
+          'सर्व्हरवर पुरावा फाइल सापडली नाही. कृपया पुन्हा अपलोड करा.',
       'couldNotSharePdf': 'PDF शेअर होऊ शकले नाही.',
       'couldNotExportEvidence': 'साक्ष्य पॅकेज निर्यात होऊ शकले नाही.',
       'riskLevel': 'धोका पातळी',

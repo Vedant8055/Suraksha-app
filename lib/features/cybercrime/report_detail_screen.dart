@@ -1,6 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/models/cybercrime_models.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/services/cyber_protection_service.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/utils/cyber_vault_lock.dart';
@@ -29,9 +30,6 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
   final _vaultLock = CyberVaultLock();
   CyberReportDetail? _detail;
   bool _loading = true;
-  bool _lockEnabled = false;
-  bool _biometricsAvailable = false;
-  bool _viewUnlocked = true;
 
   @override
   void initState() {
@@ -40,14 +38,11 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
   }
 
   Future<void> _bootstrap() async {
-    final enabled = await _vaultLock.isEnabled();
-    final biometrics = await _vaultLock.canUseBiometrics();
+    // Clear any leftover viewing lock from older app versions.
+    try {
+      await _vaultLock.disable();
+    } catch (_) {}
     if (!mounted) return;
-    setState(() {
-      _lockEnabled = enabled;
-      _biometricsAvailable = biometrics;
-      _viewUnlocked = !enabled;
-    });
     await _load();
   }
 
@@ -67,68 +62,12 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
     }
   }
 
-  Future<bool> _ensureViewUnlocked() async {
-    if (!_lockEnabled || _viewUnlocked) return true;
-    final l10n = AppLocalizations.of(context);
-
-    if (_biometricsAvailable) {
-      final bioOk = await _vaultLock.authenticateBiometric(
-        reason: l10n.t('cyberVaultBiometricReason'),
-      );
-      if (!mounted) return false;
-      if (bioOk) {
-        setState(() => _viewUnlocked = true);
-        return true;
-      }
-    }
-
-    if (!mounted) return false;
-    final controller = TextEditingController();
-    final pin = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.t('cyberVaultUnlockTitle')),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(8),
-          ],
-          decoration: InputDecoration(labelText: l10n.t('medicalPinLabel')),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(l10n.t('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: Text(l10n.t('cyberVaultUnlockAction')),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (pin == null || pin.isEmpty || !mounted) return false;
-
-    final ok = await _vaultLock.verifyPin(pin);
-    if (!ok) {
-      if (!mounted) return false;
-      showCyberSnack(context, l10n.t('cyberVaultPinIncorrect'));
-      return false;
-    }
-    setState(() => _viewUnlocked = true);
-    return true;
-  }
-
   Future<void> _previewEvidence(EvidenceItem item) async {
-    if (!await _ensureViewUnlocked()) return;
     try {
       final downloaded = await widget.service.downloadEvidence(item.id);
       if (!mounted) return;
-      if (downloaded.mimeType.startsWith('image/')) {
+      final mime = downloaded.mimeType.split(';').first.trim().toLowerCase();
+      if (mime.startsWith('image/')) {
         await showDialog<void>(
           context: context,
           builder: (context) => Dialog(
@@ -136,6 +75,12 @@ class _CyberReportDetailScreenState extends State<CyberReportDetailScreen> {
               child: Image.memory(
                 Uint8List.fromList(downloaded.bytes),
                 fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    AppLocalizations.of(context).t('previewFailed'),
+                  ),
+                ),
               ),
             ),
           ),

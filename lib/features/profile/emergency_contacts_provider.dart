@@ -103,6 +103,7 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
   final bool _syncEnabled;
   String? _userId;
   Future<void>? _loadContactsFuture;
+  Future<void>? _bindUserFuture;
 
   EmergencyContactsNotifier({bool syncEnabled = true})
     : _syncEnabled = syncEnabled,
@@ -114,6 +115,7 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
     final previousUserId = _userId;
     _userId = null;
     _loadContactsFuture = null;
+    _bindUserFuture = null;
     state = const [];
     await _scrubLocalContacts(previousUserId);
   }
@@ -121,9 +123,37 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
   Future<void> bindUser(String userId) async {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) return;
-    if (_userId == normalizedUserId && state.isNotEmpty) return;
 
-    _userId = normalizedUserId;
+    final inFlight = _bindUserFuture;
+    if (inFlight != null) {
+      await inFlight;
+      if (_userId == normalizedUserId) {
+        if (state.isNotEmpty) return;
+        await loadContacts();
+        return;
+      }
+    }
+
+    // Same user: never wipe an already-loaded list; just refresh if empty.
+    if (_userId == normalizedUserId) {
+      if (state.isNotEmpty) return;
+      await loadContacts();
+      return;
+    }
+
+    final bindFuture = _bindUserInternal(normalizedUserId);
+    _bindUserFuture = bindFuture;
+    try {
+      await bindFuture;
+    } finally {
+      if (identical(_bindUserFuture, bindFuture)) {
+        _bindUserFuture = null;
+      }
+    }
+  }
+
+  Future<void> _bindUserInternal(String userId) async {
+    _userId = userId;
     _loadContactsFuture = null;
     state = const [];
     await loadContacts();
@@ -166,10 +196,23 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
     }
   }
 
-  Future<bool> hasSavedContacts() async {
+  /// Waits for any in-flight bind/load, then reports whether contacts exist.
+  ///
+  /// Returns `null` when the user is not bound yet, so callers can avoid
+  /// showing a false "missing contacts" reminder during startup races.
+  Future<bool?> hasSavedContactsResolved() async {
+    final bind = _bindUserFuture;
+    if (bind != null) await bind;
+
+    if (_userId == null || _userId!.isEmpty) return null;
     if (state.isNotEmpty) return true;
+
     await loadContacts();
     return state.isNotEmpty;
+  }
+
+  Future<bool> hasSavedContacts() async {
+    return (await hasSavedContactsResolved()) ?? false;
   }
 
   Future<bool> addContact(EmergencyContact contact) async {

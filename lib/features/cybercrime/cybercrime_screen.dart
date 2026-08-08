@@ -20,13 +20,22 @@ class CyberCrimeScreen extends ConsumerStatefulWidget {
   ConsumerState<CyberCrimeScreen> createState() => _CyberCrimeScreenState();
 }
 
-class _CyberCrimeScreenState extends ConsumerState<CyberCrimeScreen> {
+class _CyberCrimeScreenState extends ConsumerState<CyberCrimeScreen>
+    with SingleTickerProviderStateMixin {
   final _service = CyberProtectionService();
+  late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 4, vsync: this);
     unawaited(ensureBackendReachable());
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<bool> _handleApiError(DioException error) {
@@ -38,74 +47,73 @@ class _CyberCrimeScreenState extends ConsumerState<CyberCrimeScreen> {
     final l10n = AppLocalizations.of(context);
     final isLight = Theme.of(context).brightness == Brightness.light;
 
-    return DefaultTabController(
-      length: 4,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.t('cyberCrimeProtection')),
-          systemOverlayStyle: AppTheme.overlayStyleForBrightness(
-            Theme.of(context).brightness,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(l10n.t('cyberCrimeProtection')),
+        systemOverlayStyle: AppTheme.overlayStyleForBrightness(
+          Theme.of(context).brightness,
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          isScrollable: true,
+          indicatorSize: TabBarIndicatorSize.label,
+          indicatorWeight: 3,
+          indicatorColor: AppTheme.primaryColor,
+          labelColor: AppTheme.primaryColor,
+          unselectedLabelColor: isLight
+              ? const Color(0xFF6B7C95)
+              : Colors.white54,
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 13,
           ),
-          bottom: TabBar(
-            isScrollable: true,
-            indicatorSize: TabBarIndicatorSize.label,
-            indicatorWeight: 3,
-            indicatorColor: AppTheme.primaryColor,
-            labelColor: AppTheme.primaryColor,
-            unselectedLabelColor: isLight
-                ? const Color(0xFF6B7C95)
-                : Colors.white54,
-            labelStyle: const TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 13,
+          unselectedLabelStyle: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+          tabs: [
+            Tab(
+              icon: const Icon(Icons.psychology_rounded),
+              text: l10n.t('aiAssist'),
             ),
-            unselectedLabelStyle: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
+            Tab(
+              icon: const Icon(Icons.assignment_rounded),
+              text: l10n.t('report'),
             ),
-            tabs: [
-              Tab(
-                icon: const Icon(Icons.psychology_rounded),
-                text: l10n.t('aiAssist'),
-              ),
-              Tab(
-                icon: const Icon(Icons.assignment_rounded),
-                text: l10n.t('report'),
-              ),
-              Tab(icon: const Icon(Icons.lock_rounded), text: l10n.t('vault')),
-              Tab(
-                icon: const Icon(Icons.school_rounded),
-                text: l10n.t('learn'),
-              ),
-            ],
+            Tab(icon: const Icon(Icons.lock_rounded), text: l10n.t('vault')),
+            Tab(
+              icon: const Icon(Icons.school_rounded),
+              text: l10n.t('learn'),
+            ),
+          ],
+        ),
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isLight
+                ? const [
+                    Color(0xFFF7FAFF),
+                    Color(0xFFF1F6FF),
+                    Color(0xFFEDF3FE),
+                  ]
+                : const [
+                    Color(0xFF071025),
+                    Color(0xFF0A1A35),
+                    Color(0xFF08162B),
+                  ],
           ),
         ),
-        body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: isLight
-                  ? const [
-                      Color(0xFFF7FAFF),
-                      Color(0xFFF1F6FF),
-                      Color(0xFFEDF3FE),
-                    ]
-                  : const [
-                      Color(0xFF071025),
-                      Color(0xFF0A1A35),
-                      Color(0xFF08162B),
-                    ],
-            ),
-          ),
-          child: TabBarView(
-            children: [
-              CyberAssistantTab(service: _service, onApiError: _handleApiError),
-              CyberReportTab(service: _service, onApiError: _handleApiError),
-              CyberVaultTab(service: _service, onApiError: _handleApiError),
-              CyberLearningTab(service: _service, onApiError: _handleApiError),
-            ],
-          ),
+        child: TabBarView(
+          controller: _tabController,
+          children: [
+            CyberAssistantTab(service: _service, onApiError: _handleApiError),
+            CyberReportTab(service: _service, onApiError: _handleApiError),
+            CyberVaultTab(service: _service, onApiError: _handleApiError),
+            CyberLearningTab(service: _service, onApiError: _handleApiError),
+          ],
         ),
       ),
     );

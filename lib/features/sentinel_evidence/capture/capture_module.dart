@@ -1,0 +1,33 @@
+/*
+-------------------------------------------------------
+
+Sentinel Evidence System (SES)
+
+Module:
+Experimental Feature
+
+Purpose:
+Emergency evidence collection architecture
+
+Current Phase:
+Architecture Preparation
+
+Status:
+TEST MODE
+
+Safe Removal:
+Delete sentinel_evidence folder and
+remove integration points.
+
+-------------------------------------------------------
+*/
+
+/// Capture submodule marker (camera/audio/location/session/media).
+/// Implementation arrives in later master prompts.
+library;
+
+class SentinelCaptureModule {
+  const SentinelCaptureModule._();
+
+  static const String name = 'capture';
+}

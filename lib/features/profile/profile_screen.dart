@@ -24,6 +24,7 @@ import 'package:suraksha_women_safety_app/features/profile/profile_format_helper
 import 'package:suraksha_women_safety_app/features/profile/profile_settings_widgets.dart';
 import 'package:suraksha_women_safety_app/features/profile/account_privacy_screen.dart';
 import 'package:suraksha_women_safety_app/features/profile/signed_in_devices_screen.dart';
+import 'package:suraksha_women_safety_app/features/sentinel_evidence/widgets/sentinel_profile_card.dart';
 import 'package:suraksha_women_safety_app/features/maps/safety_map_screen.dart';
 import 'package:suraksha_women_safety_app/features/medical/medical_vault_screen.dart';
 import 'package:suraksha_women_safety_app/features/sos/sensor_service.dart';
@@ -771,6 +772,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   label: Text(l10n.t('accountPrivacyTitle')),
                 ),
               ),
+              const SizedBox(height: 14),
+              const SentinelProfileCard(),
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,

@@ -28,6 +28,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
   bool _otpSent = false;
   bool _isVerifying = false;
+  bool _isSendingOtp = false;
   int _resendSeconds = 0;
   Timer? _resendTimer;
 
@@ -63,7 +64,8 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
     });
   }
 
-  void _resetOtpState() {
+  void _onEmailChanged(String _) {
+    if (!_otpSent && _otpController.text.isEmpty) return;
     setState(() {
       _otpSent = false;
       _otpController.clear();
@@ -88,30 +90,38 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       return;
     }
 
-    _resetOtpState();
     ref.read(authProvider.notifier).clearError();
+    setState(() => _isSendingOtp = true);
 
     final result = await ref.read(authProvider.notifier).sendOtp(
           email: email,
           purpose: 'register',
+          phone: phone,
         );
 
     if (!mounted) return;
-    if (!result.success) {
-      if (result.retryAfterSeconds != null) {
-        _startResendTimer(result.retryAfterSeconds!);
+    setState(() => _isSendingOtp = false);
+
+    if (result.success || result.allowEnterOtp) {
+      setState(() => _otpSent = true);
+      final cooldown = result.retryAfterSeconds ?? result.resendAfterSeconds;
+      if (result.success || result.retryAfterSeconds != null) {
+        _startResendTimer(cooldown);
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? l10n.t('otpSendFailed'))),
+        SnackBar(
+          content: Text(
+            result.success
+                ? l10n.t('otpSent')
+                : (result.error ?? l10n.t('otpSendCheckInbox')),
+          ),
+        ),
       );
       return;
     }
 
-    setState(() => _otpSent = true);
-    _startResendTimer(result.resendAfterSeconds);
-
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.t('otpSent'))),
+      SnackBar(content: Text(result.error ?? l10n.t('otpSendFailed'))),
     );
   }
 
@@ -173,7 +183,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final authState = ref.watch(authProvider);
-    final busy = authState.isLoading || _isVerifying;
+    final busy = authState.isLoading || _isVerifying || _isSendingOtp;
 
     return AuthScreenShell(
       child: LayoutBuilder(
@@ -245,7 +255,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                         keyboardType: TextInputType.emailAddress,
                         autofillHints: const [AutofillHints.email],
                         enabled: !busy,
-                        onChanged: (_) => _resetOtpState(),
+                        onChanged: _onEmailChanged,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -271,7 +281,19 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                           onPressed: busy || (_otpSent && _resendSeconds > 0)
                               ? null
                               : _sendOtp,
-                          icon: const Icon(Icons.mark_email_unread_outlined, size: 20),
+                          icon: _isSendingOtp
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.mark_email_unread_outlined,
+                                  size: 20,
+                                ),
                           label: Text(
                             _otpSent
                                 ? (_resendSeconds > 0
@@ -304,7 +326,16 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                       ),
                     ),
                     if (_otpSent) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
+                      Text(
+                        l10n.t('otpEnterHint'),
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          height: 1.35,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       AuthTextField(
                         controller: _otpController,
                         hint: l10n.t('enterOtp'),
@@ -320,10 +351,18 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                       const SizedBox(height: 16),
                       SizedBox(
                         width: double.infinity,
+                        height: 52,
                         child: ElevatedButton(
                           onPressed: busy ? null : _verifyOtpAndContinue,
                           child: _isVerifying
-                              ? const CircularProgressIndicator(color: Colors.white)
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
                               : Text(l10n.t('continueToAccountDetails')),
                         ),
                       ),

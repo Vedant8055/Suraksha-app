@@ -143,6 +143,11 @@ class _MyAppState extends ConsumerState<MyApp> {
       }
       final wasAuthenticated = previous?.isAuthenticated ?? false;
       if (!wasAuthenticated && next.isAuthenticated && next.user != null) {
+        // Clear signup / forgot-password routes so AuthGate's Dashboard is visible.
+        final navigator = _navigatorKey.currentState;
+        if (navigator != null && navigator.canPop()) {
+          navigator.popUntil((route) => route.isFirst);
+        }
         unawaited(
           ref.read(profileDisplayProvider.notifier).applyUser(next.user!),
         );

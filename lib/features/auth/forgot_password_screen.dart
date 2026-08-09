@@ -80,6 +80,18 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     if (!mounted) return;
 
     if (!result.success) {
+      if (result.allowEnterOtp) {
+        setState(() => _otpSent = true);
+        if (result.retryAfterSeconds != null) {
+          _startResendTimer(result.retryAfterSeconds!);
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.error ?? l10n.t('otpSendCheckInbox')),
+          ),
+        );
+        return;
+      }
       if (result.retryAfterSeconds != null) {
         _startResendTimer(result.retryAfterSeconds!);
       }
@@ -216,7 +228,16 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                       ),
                     ),
                     if (_otpSent) ...[
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 12),
+                      Text(
+                        l10n.t('otpEnterHint'),
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          height: 1.35,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       AuthTextField(
                         controller: _otpController,
                         hint: l10n.t('enterOtp'),

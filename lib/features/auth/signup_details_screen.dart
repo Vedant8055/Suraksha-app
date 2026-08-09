@@ -91,6 +91,8 @@ class _SignupDetailsScreenState extends ConsumerState<SignupDetailsScreen> {
         );
     if (ok && mounted) {
       TextInput.finishAutofillContext(shouldSave: true);
+      // AuthGate shows Dashboard underneath; drop signup routes immediately.
+      Navigator.of(context).popUntil((route) => route.isFirst);
     }
   }
 

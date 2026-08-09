@@ -47,7 +47,7 @@ class AppLocalizations {
           'Enter your name, email, and mobile number. We will send a one-time code to your email.',
       'signUpVerifyEmail': 'Verify your email',
       'signUpVerifyEmailSubtitle':
-          'Enter your name, email, and mobile number. We will send a one-time code to your email.',
+          'Enter your name, email, and mobile number. Tap SEND OTP, then enter the 6-digit code from your email below.',
       'signUpCompleteProfile': 'Complete your profile',
       'signUpCompleteProfileSubtitle':
           'Set a password to finish creating your account.',
@@ -71,9 +71,13 @@ class AppLocalizations {
       'resendOtp': 'RESEND OTP',
       'resendOtpIn': 'Resend OTP in {seconds}s',
       'enterOtp': '6-digit OTP',
+      'otpEnterHint':
+          'Enter the 6-digit code from your email. If you already received it, type it here and continue.',
       'verifyOtp': 'VERIFY OTP',
-      'otpSent': 'OTP sent to your email.',
-      'otpSendFailed': 'Could not send OTP. Try again.',
+      'otpSent': 'OTP sent to your email. Enter it below.',
+      'otpSendFailed': 'Could not send OTP. Check your details and try again.',
+      'otpSendCheckInbox':
+          'If an email arrived with a code, enter it below. If not, wait a moment and tap Resend.',
       'otpInvalid': 'Enter the 6-digit OTP.',
       'phoneVerified': 'Email verified.',
       'verifyPhoneFirst': 'Verify your email with OTP before continuing.',
@@ -1736,7 +1740,7 @@ class AppLocalizations {
           'अपना नाम, ईमेल और मोबाइल नंबर दर्ज करें। हम ईमेल पर एक बार का कोड भेजेंगे।',
       'signUpVerifyEmail': 'अपना ईमेल सत्यापित करें',
       'signUpVerifyEmailSubtitle':
-          'अपना नाम, ईमेल और मोबाइल नंबर दर्ज करें। हम ईमेल पर एक बार का कोड भेजेंगे।',
+          'अपना नाम, ईमेल और मोबाइल दर्ज करें। SEND OTP दबाएँ, फिर ईमेल से मिला 6 अंकों का कोड नीचे लिखें।',
       'signUpCompleteProfile': 'अपनी प्रोफ़ाइल पूरी करें',
       'signUpCompleteProfileSubtitle':
           'खाता बनाने के लिए पासवर्ड सेट करें।',
@@ -1760,9 +1764,13 @@ class AppLocalizations {
       'resendOtp': 'OTP दोबारा भेजें',
       'resendOtpIn': '{seconds}s में OTP दोबारा भेजें',
       'enterOtp': '6 अंकों का OTP',
+      'otpEnterHint':
+          'ईमेल में मिला 6 अंकों का कोड यहाँ लिखें। अगर कोड पहले आ चुका है, तो यहीं दर्ज कर आगे बढ़ें।',
       'verifyOtp': 'OTP सत्यापित करें',
-      'otpSent': 'OTP आपके ईमेल पर भेजा गया।',
-      'otpSendFailed': 'OTP भेजा नहीं जा सका। पुनः प्रयास करें।',
+      'otpSent': 'OTP आपके ईमेल पर भेजा गया। नीचे दर्ज करें।',
+      'otpSendFailed': 'OTP नहीं भेजा जा सका। विवरण जाँचकर फिर कोशिश करें।',
+      'otpSendCheckInbox':
+          'अगर ईमेल में कोड आया है तो नीचे लिखें। नहीं आया हो तो थोड़ा रुककर Resend दबाएँ।',
       'otpInvalid': '6 अंकों का OTP दर्ज करें।',
       'phoneVerified': 'ईमेल सत्यापित हो गया।',
       'verifyPhoneFirst': 'जारी रखने से पहले OTP से ईमेल सत्यापित करें।',
@@ -3243,7 +3251,7 @@ class AppLocalizations {
           'आपले नाव, ईमेल आणि मोबाइल नंबर प्रविष्ट करा. आम्ही ईमेलवर एक वेळचा कोड पाठवू.',
       'signUpVerifyEmail': 'आपला ईमेल पडताळा',
       'signUpVerifyEmailSubtitle':
-          'आपले नाव, ईमेल आणि मोबाइल नंबर प्रविष्ट करा. आम्ही ईमेलवर एक वेळचा कोड पाठवू.',
+          'नाव, ईमेल आणि मोबाइल टाका. SEND OTP दाबा, नंतर ईमेलमधील 6 अंकी कोड खाली लिहा.',
       'signUpCompleteProfile': 'आपली प्रोफाइल पूर्ण करा',
       'signUpCompleteProfileSubtitle':
           'खाते तयार करण्यासाठी पासवर्ड सेट करा.',
@@ -3267,9 +3275,13 @@ class AppLocalizations {
       'resendOtp': 'OTP पुन्हा पाठवा',
       'resendOtpIn': '{seconds}s मध्ये OTP पुन्हा पाठवा',
       'enterOtp': '6 अंकी OTP',
+      'otpEnterHint':
+          'ईमेलमधील 6 अंकी कोड इथे लिहा. कोड आधीच आला असेल तर इथे टाकून पुढे जा.',
       'verifyOtp': 'OTP पडताळा',
-      'otpSent': 'OTP तुमच्या ईमेलवर पाठवला.',
-      'otpSendFailed': 'OTP पाठवता आला नाही. पुन्हा प्रयत्न करा.',
+      'otpSent': 'OTP तुमच्या ईमेलवर पाठवला. खाली लिहा.',
+      'otpSendFailed': 'OTP पाठवता आला नाही. तपशील तपासून पुन्हा प्रयत्न करा.',
+      'otpSendCheckInbox':
+          'ईमेलमध्ये कोड आला असेल तर खाली लिहा. नसेल तर थोडे थांबून Resend दाबा.',
       'otpInvalid': '6 अंकी OTP टाका.',
       'phoneVerified': 'ईमेल पडताळला.',
       'verifyPhoneFirst': 'पुढे जाण्यापूर्वी OTP ने ईमेल पडताळा.',

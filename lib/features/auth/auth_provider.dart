@@ -38,11 +38,16 @@ class OtpSendResult {
   final int resendAfterSeconds;
   final int? retryAfterSeconds;
 
+  /// When true, show the OTP entry field even if [success] is false
+  /// (e.g. timeout after the server may already have emailed the code).
+  final bool allowEnterOtp;
+
   const OtpSendResult({
     required this.success,
     this.error,
     this.resendAfterSeconds = 60,
     this.retryAfterSeconds,
+    this.allowEnterOtp = false,
   });
 }
 
@@ -304,34 +309,65 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<OtpSendResult> sendOtp({
     required String email,
     required String purpose,
+    String? phone,
   }) async {
     try {
+      final data = <String, dynamic>{
+        'email': email.trim().toLowerCase(),
+        'purpose': purpose,
+      };
+      final trimmedPhone = phone?.trim() ?? '';
+      if (trimmedPhone.isNotEmpty) {
+        data['phone'] = trimmedPhone;
+      }
       final response = await _authPost(
         ApiConstants.otpSend,
-        data: {'email': email.trim().toLowerCase(), 'purpose': purpose},
+        data: data,
       );
-      final data = response.data as Map<String, dynamic>;
+      final body = response.data as Map<String, dynamic>;
       return OtpSendResult(
         success: true,
-        resendAfterSeconds: (data['resendAfterSeconds'] as num?)?.toInt() ?? 60,
+        allowEnterOtp: true,
+        resendAfterSeconds: (body['resendAfterSeconds'] as num?)?.toInt() ?? 60,
       );
     } on DioException catch (error) {
       final parsed = await _messageFromDio(
         error,
         fallbackKey: 'otpSendFailed',
       );
+      final softFailure = _isOtpSendSoftFailure(error);
       return OtpSendResult(
         success: false,
-        error: parsed.message,
+        allowEnterOtp: softFailure,
+        error: softFailure
+            ? await _localized('otpSendCheckInbox')
+            : parsed.message,
         retryAfterSeconds: parsed.retryAfterSeconds,
         resendAfterSeconds: parsed.retryAfterSeconds ?? 60,
       );
     } catch (_) {
       return OtpSendResult(
         success: false,
-        error: await _localized('otpSendFailed'),
+        allowEnterOtp: true,
+        error: await _localized('otpSendCheckInbox'),
       );
     }
+  }
+
+  bool _isOtpSendSoftFailure(DioException error) {
+    if (BackendUrlResolver.isConnectionError(error)) return true;
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return true;
+      default:
+        break;
+    }
+    // Rate-limited: a previous send may already have delivered the email.
+    if (error.response?.statusCode == 429) return true;
+    return false;
   }
 
   Future<OtpVerifyResult> verifyOtp({
@@ -590,19 +626,32 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
       final data = response.data;
       if (data is Map && data['unchanged'] == true) {
-        return const OtpSendResult(success: true, resendAfterSeconds: 0);
+        return const OtpSendResult(
+          success: true,
+          allowEnterOtp: true,
+          resendAfterSeconds: 0,
+        );
       }
       final resend = (data is Map ? data['resendAfterSeconds'] as num? : null)?.toInt() ?? 60;
-      return OtpSendResult(success: true, resendAfterSeconds: resend);
+      return OtpSendResult(
+        success: true,
+        allowEnterOtp: true,
+        resendAfterSeconds: resend,
+      );
     } on DioException catch (error) {
+      final soft = _isOtpSendSoftFailure(error);
       return OtpSendResult(
         success: false,
-        error: (await _messageFromDio(error, fallbackKey: 'otpSendFailed')).message,
+        allowEnterOtp: soft,
+        error: soft
+            ? await _localized('otpSendCheckInbox')
+            : (await _messageFromDio(error, fallbackKey: 'otpSendFailed')).message,
       );
     } catch (_) {
       return OtpSendResult(
         success: false,
-        error: await _localized('otpSendFailed'),
+        allowEnterOtp: true,
+        error: await _localized('otpSendCheckInbox'),
       );
     }
   }
@@ -770,9 +819,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   String _sanitizeAuthMessage(String message) {
     final lower = message.toLowerCase();
-    if (lower.contains('phone already registered') ||
-        lower.contains('no account found') ||
-        lower.contains('email already registered')) {
+    // Keep actionable register/login conflict copy from the API.
+    if (lower.contains('already exists') ||
+        lower.contains('already registered') ||
+        lower.contains('please sign in')) {
+      return message;
+    }
+    if (lower.contains('no account found')) {
       return 'If this number is eligible, follow the on-screen steps or try signing in.';
     }
     return message;

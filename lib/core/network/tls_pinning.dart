@@ -13,9 +13,14 @@ class TlsPinning {
 
   static const productionHost = 'suraksha-backend-gtdi.onrender.com';
 
-  /// Current production leaf (onrender.com via GTS WE1). When Render rotates
-  /// the cert, add the new fingerprint via TLS_PIN_SHA256 until this is updated.
+  /// Production leaf certificates (onrender.com via GTS WE1). Keep the
+  /// previous leaf during a rotation so either CDN edge certificate is valid.
+  /// New release APKs must include each newly observed Render leaf before the
+  /// old one expires.
   static const _builtinLeafFingerprints = <String>{
+    // Active leaf, verified 2026-08-09 (expires 2026-10-22).
+    '04:1E:C4:C6:9F:66:77:19:7B:4E:F1:C0:67:42:11:64:F4:B2:69:DA:27:F2:F5:30:29:2C:AB:BB:05:1F:C1:B1',
+    // Previous leaf retained for a safe certificate transition.
     'B2:F6:50:F8:65:95:06:1C:84:DF:28:DB:E5:EF:8F:9E:97:43:B0:7E:27:F6:67:E3:8F:1E:00:96:4D:E0:1F:9A',
   };
 

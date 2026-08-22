@@ -13,7 +13,8 @@ import 'package:suraksha_women_safety_app/core/notifications/local_alert_service
 import 'package:suraksha_women_safety_app/core/notifications/notification_deep_link.dart';
 import 'package:suraksha_women_safety_app/core/notifications/notification_onboarding_sheet.dart';
 import 'package:suraksha_women_safety_app/core/notifications/push_notification_service.dart';
-import 'package:suraksha_women_safety_app/core/navigation/app_navigator.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/activity_log_navigator_observer.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_gate.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
 import 'package:suraksha_women_safety_app/config/feature_flags.dart';
@@ -44,6 +45,8 @@ Future<void> main() async {
   unawaited(NetworkManager.instance.warmUpInBackground());
   unawaited(_warmUpFirebaseAndPush());
   unawaited(LocalAlertService.instance.ensureReady());
+  unawaited(AppActivityLog.instance.record('app_started'));
+  unawaited(AppActivityLog.instance.store.purgeExpired());
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -288,6 +291,7 @@ class _MyAppState extends ConsumerState<MyApp> {
           GlobalCupertinoLocalizations.delegate,
         ],
         home: const BrandSplashGate(child: AuthGate()),
+        navigatorObservers: [ActivityLogNavigatorObserver()],
       ),
     );
   }

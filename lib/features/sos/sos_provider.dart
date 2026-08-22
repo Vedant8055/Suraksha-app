@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:socket_io_client/socket_io_client.dart' as socket_io;
 import 'package:geolocator/geolocator.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
 import 'package:suraksha_women_safety_app/config/app_environment.dart';
 import 'package:suraksha_women_safety_app/config/feature_flags.dart';
@@ -372,8 +373,11 @@ class SOSNotifier extends StateNotifier<SOSState> {
         serverDelivery: SosDeliveryStatus.unavailable,
         smsDelivery: SosDeliveryStatus.unavailable,
       );
+      unawaited(AppActivityLog.instance.record('sos_blocked_no_contacts'));
       return;
     }
+
+    unawaited(AppActivityLog.instance.record('sos_triggered'));
 
     state = state.copyWith(
       isActive: true,
@@ -661,6 +665,7 @@ class SOSNotifier extends StateNotifier<SOSState> {
   }
 
   Future<void> cancelSOS() async {
+    unawaited(AppActivityLog.instance.record('sos_cancelled'));
     final currentEventId = state.sosEventId;
     final currentPosition = state.currentPosition;
 

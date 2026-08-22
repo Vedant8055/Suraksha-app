@@ -74,20 +74,28 @@ class EmergencyContact {
     );
   }
 
+  /// Last 10 digits of an Indian mobile, ignoring +91 / 91 / spaces.
+  static String identityDigits(String value) {
+    var digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 12 && digits.startsWith('91')) {
+      digits = digits.substring(digits.length - 10);
+    } else if (digits.length > 10) {
+      digits = digits.substring(digits.length - 10);
+    }
+    return digits;
+  }
+
   static String normalizePhoneNumber(String value) {
-    final trimmed = value.trim();
-    final hasPlus = trimmed.startsWith('+');
-    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-    return hasPlus ? '+$digits' : digits;
+    final national = identityDigits(value);
+    if (RegExp(r'^[6-9]\d{9}$').hasMatch(national)) {
+      return '+91$national';
+    }
+    if (national.isEmpty) return '';
+    return '+$national';
   }
 
   static bool isValidIndianMobile(String value) {
-    var digits = value.replaceAll(RegExp(r'\D'), '');
-    if (digits.length == 12 && digits.startsWith('91')) {
-      digits = digits.substring(2);
-    }
-    return RegExp(r'^[6-9]\d{9}$').hasMatch(digits);
+    return RegExp(r'^[6-9]\d{9}$').hasMatch(identityDigits(value));
   }
 }
 
@@ -498,7 +506,7 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
   }
 
   String _contactKey(EmergencyContact contact) {
-    final phone = EmergencyContact.normalizePhoneNumber(contact.phone);
+    final phone = EmergencyContact.identityDigits(contact.phone);
     if (phone.isNotEmpty) return 'phone:$phone';
     if (contact.id.isNotEmpty) return 'id:${contact.id}';
     return '';
@@ -509,7 +517,7 @@ class EmergencyContactsNotifier extends StateNotifier<List<EmergencyContact>> {
   ) {
     const legacyPhones = {'7020094073', '9359264978', '8462969160'};
     return contacts.where((contact) {
-      final phone = contact.phone.replaceAll(RegExp(r'\D'), '');
+      final phone = EmergencyContact.identityDigits(contact.phone);
       return !contact.id.startsWith('default_') &&
           !legacyPhones.contains(phone);
     }).toList();

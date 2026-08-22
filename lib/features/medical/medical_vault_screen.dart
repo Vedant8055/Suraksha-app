@@ -13,6 +13,8 @@ import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
 import 'package:suraksha_women_safety_app/features/medical/medical_vault_auth.dart';
 import 'package:suraksha_women_safety_app/localization/app_localizations.dart';
 import 'package:suraksha_women_safety_app/theme/app_theme.dart';
+import 'package:suraksha_women_safety_app/widgets/blood_group_dropdown.dart';
+import 'package:suraksha_women_safety_app/widgets/blood_group_options.dart';
 import 'package:suraksha_women_safety_app/widgets/save_feedback_dialog.dart';
 
 class MedicalVaultScreen extends ConsumerStatefulWidget {
@@ -921,7 +923,7 @@ class _MedicalVaultScreenState extends ConsumerState<MedicalVaultScreen> {
   Future<void> _showEditMedicalDialog() async {
     final navigator = Navigator.of(context);
     final l10n = AppLocalizations.of(context);
-    final bloodController = TextEditingController(text: _bloodGroup);
+    var selectedBloodGroup = BloodGroupOptions.match(_bloodGroup);
     final allergiesController = TextEditingController(text: _allergies);
     final conditionsController = TextEditingController(text: _medicalConditions);
     final medsController = TextEditingController(text: _medications);
@@ -929,15 +931,18 @@ class _MedicalVaultScreenState extends ConsumerState<MedicalVaultScreen> {
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
         title: Text(l10n.t('editMedicalProfile')),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: bloodController,
-                decoration: InputDecoration(labelText: l10n.t('bloodGroup')),
+              BloodGroupDropdown(
+                value: selectedBloodGroup,
+                showPrefixIcon: false,
+                onChanged: (group) =>
+                    setDialogState(() => selectedBloodGroup = group),
               ),
               TextField(
                 controller: allergiesController,
@@ -970,7 +975,7 @@ class _MedicalVaultScreenState extends ConsumerState<MedicalVaultScreen> {
           ElevatedButton(
             onPressed: () async {
               await _saveMedicalProfile(
-                bloodGroup: bloodController.text.trim(),
+                bloodGroup: selectedBloodGroup ?? '',
                 allergies: allergiesController.text.trim(),
                 medicalConditions: conditionsController.text.trim(),
                 medications: medsController.text.trim(),
@@ -981,6 +986,7 @@ class _MedicalVaultScreenState extends ConsumerState<MedicalVaultScreen> {
             child: Text(l10n.t('save')),
           ),
         ],
+      ),
       ),
     );
   }

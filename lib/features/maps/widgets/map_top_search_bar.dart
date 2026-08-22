@@ -47,7 +47,7 @@ class MapTopSearchBar extends StatelessWidget {
             child: SizeTransition(
               sizeFactor: animation,
               axis: Axis.horizontal,
-              alignment: Alignment.centerRight,
+              axisAlignment: 1.0,
               child: child,
             ),
           );

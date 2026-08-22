@@ -83,8 +83,39 @@ void main() {
       );
       expect(
         EmergencyContact.normalizePhoneNumber('98765 43210'),
-        '9876543210',
+        '+919876543210',
       );
+      expect(
+        EmergencyContact.identityDigits('+91 98765 43210'),
+        EmergencyContact.identityDigits('9876543210'),
+      );
+    });
+
+    test('rejects a second contact with the same Indian number', () async {
+      final notifier = EmergencyContactsNotifier(syncEnabled: false);
+      addTearDown(notifier.dispose);
+      await notifier.bindUser('test-user-dup');
+
+      final first = await notifier.addContact(
+        const EmergencyContact(
+          id: '',
+          name: 'Asha',
+          phone: '98765 43210',
+          relation: 'Sister',
+        ),
+      );
+      final second = await notifier.addContact(
+        const EmergencyContact(
+          id: '',
+          name: 'Asha Again',
+          phone: '+91 98765 43210',
+          relation: 'Friend',
+        ),
+      );
+
+      expect(first, isTrue);
+      expect(second, isFalse);
+      expect(notifier.state, hasLength(1));
     });
 
     test(

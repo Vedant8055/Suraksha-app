@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_interceptor.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_token_storage.dart';
 import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
@@ -290,8 +291,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
       await _applyAuthResponse(response.data as Map<String, dynamic>);
       TextInput.finishAutofillContext(shouldSave: true);
+      unawaited(AppActivityLog.instance.record('login_success'));
       return true;
     } on DioException catch (error) {
+      unawaited(AppActivityLog.instance.record('login_failed'));
       state = state.copyWith(
         isLoading: false,
         error: (await _messageFromDio(error, fallbackKey: 'authLoginFailed')).message,
@@ -468,12 +471,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final response = await _authPost(ApiConstants.register, data: payload);
       await _applyAuthResponse(response.data as Map<String, dynamic>);
       TextInput.finishAutofillContext(shouldSave: true);
+      unawaited(AppActivityLog.instance.record('signup_success'));
       return true;
     } on DioException catch (error) {
       state = state.copyWith(
         isLoading: false,
         error: (await _messageFromDio(error, fallbackKey: 'authSignupFailed')).message,
       );
+      unawaited(AppActivityLog.instance.record('signup_failed'));
       return false;
     } catch (_) {
       state = state.copyWith(
@@ -657,6 +662,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    unawaited(AppActivityLog.instance.record('logout'));
     final userId = state.user?.id;
     final refreshToken = await _storage.read(
       key: AuthTokenStorage.refreshTokenKey,

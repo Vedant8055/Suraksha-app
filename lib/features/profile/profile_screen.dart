@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:suraksha_women_safety_app/config/feature_flags.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
+import 'package:suraksha_women_safety_app/core/security/device_credential_auth.dart';
 import 'package:suraksha_women_safety_app/core/media/profile_photo_provider.dart';
 import 'package:suraksha_women_safety_app/core/navigation/app_navigator.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
@@ -19,10 +21,12 @@ import 'package:suraksha_women_safety_app/features/profile/emergency_contacts_pr
 import 'package:suraksha_women_safety_app/features/profile/emergency_contact_guard.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_display_provider.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_hero.dart';
+import 'package:suraksha_women_safety_app/features/profile/profile_photo_crop_screen.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_session_cache.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_format_helpers.dart';
 import 'package:suraksha_women_safety_app/features/profile/profile_settings_widgets.dart';
 import 'package:suraksha_women_safety_app/features/profile/account_privacy_screen.dart';
+import 'package:suraksha_women_safety_app/features/profile/activity_logs_screen.dart';
 import 'package:suraksha_women_safety_app/features/profile/signed_in_devices_screen.dart';
 import 'package:suraksha_women_safety_app/features/sentinel_evidence/widgets/sentinel_profile_card.dart';
 import 'package:suraksha_women_safety_app/features/maps/safety_map_screen.dart';
@@ -38,6 +42,8 @@ import 'package:suraksha_women_safety_app/localization/localized_display_name.da
 import 'package:suraksha_women_safety_app/models/user_model.dart';
 import 'package:suraksha_women_safety_app/theme/app_theme.dart';
 import 'package:suraksha_women_safety_app/theme/theme_mode_provider.dart';
+import 'package:suraksha_women_safety_app/widgets/blood_group_dropdown.dart';
+import 'package:suraksha_women_safety_app/widgets/blood_group_options.dart';
 import 'package:suraksha_women_safety_app/widgets/save_feedback_dialog.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -50,6 +56,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   final _profileRepo = ProfileRepository();
   bool _isSaving = false;
+  bool _isPickingPhoto = false;
   String? _localName;
   String? _localEmail;
   String? _localPhone;
@@ -60,6 +67,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
+    );
+  }
+
+  Future<void> _showDuplicatePhoneDialog() async {
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(l10n.t('duplicatePhoneNumberTitle')),
+        content: Text(l10n.t('duplicatePhoneNumber')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(l10n.t('ok')),
+          ),
+        ],
+      ),
     );
   }
 
@@ -277,7 +303,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 onPreviewPhoto: profileImage == null
                     ? null
                     : () => _showProfilePhotoPreview(profileImage),
-                onEditPhoto: _isSaving ? null : _pickAndUploadPhoto,
+                onEditPhoto: (_isSaving || _isPickingPhoto)
+                    ? null
+                    : _pickAndUploadPhoto,
                 onEditDetails: _isSaving
                     ? null
                     : () => _showEditProfileDialog(
@@ -718,13 +746,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: profileText,
                     fontWeight: FontWeight.w800,
+                    letterSpacing: -0.2,
                   ),
                 ),
               ),
               const SizedBox(height: 12),
               ...contacts.map(
                 (c) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: EmergencyContactItem(
                     contact: c,
                     enabled: !_isSaving,
@@ -737,13 +766,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
               SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: OutlinedButton.icon(
                   onPressed: _isSaving ? null : _showAddContactDialog,
-                  icon: const Icon(Icons.add_rounded),
+                  icon: const Icon(Icons.add_rounded, size: 20),
                   label: Text(l10n.t('addEmergencyContact')),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: isLight
+                        ? const Color(0xFF1A4B8C)
+                        : AppTheme.primaryColor,
+                    side: BorderSide(
+                      color: isLight
+                          ? const Color(0xFFC5D7F2)
+                          : AppTheme.primaryColor.withValues(alpha: 0.45),
+                    ),
+                    backgroundColor: isLight
+                        ? const Color(0xFFF7FAFF)
+                        : AppTheme.primaryColor.withValues(alpha: 0.08),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14.5,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 18),
@@ -770,6 +821,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                   icon: const Icon(Icons.privacy_tip_outlined),
                   label: Text(l10n.t('accountPrivacyTitle')),
+                ),
+              ),
+              const SizedBox(height: 10),
+              ProfileSettingsTile(
+                title: l10n.t('activityLogsTitle'),
+                value: l10n.t('activityLogsTileValue'),
+                icon: Icons.fact_check_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ActivityLogsScreen(),
+                  ),
                 ),
               ),
               const SizedBox(height: 14),
@@ -946,15 +1008,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final nameController = TextEditingController(text: displayName);
     final emailController = TextEditingController(text: displayEmail);
     final phoneController = TextEditingController(text: displayPhone);
-    final bloodController = TextEditingController(
-      text: (_localBloodGroup != null && _localBloodGroup!.isNotEmpty)
+    var selectedBloodGroup = BloodGroupOptions.match(
+      (_localBloodGroup != null && _localBloodGroup!.isNotEmpty)
           ? _localBloodGroup
           : (user?.bloodGroup ?? ''),
     );
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
         contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
@@ -1008,12 +1071,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: bloodController,
-                decoration: InputDecoration(
-                  labelText: l10n.t('bloodGroup'),
-                  prefixIcon: const Icon(Icons.bloodtype_rounded),
-                ),
+              BloodGroupDropdown(
+                value: selectedBloodGroup,
+                onChanged: (group) =>
+                    setDialogState(() => selectedBloodGroup = group),
               ),
             ],
           ),
@@ -1030,7 +1091,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   fullName: nameController.text.trim(),
                   email: emailController.text.trim(),
                   phone: phoneController.text.trim(),
-                  bloodGroup: bloodController.text.trim(),
+                  bloodGroup: selectedBloodGroup ?? '',
                 );
                 if (mounted) {
                   navigator.pop();
@@ -1046,6 +1107,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             child: Text(l10n.t('save')),
           ),
         ],
+      ),
       ),
     );
   }
@@ -1158,7 +1220,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             );
                         if (!mounted) return;
                         if (!saved) {
-                          _showError(l10n.t('duplicatePhoneNumber'));
+                          await _showDuplicatePhoneDialog();
                           setDialogState(() => saving = false);
                           return;
                         }
@@ -1274,7 +1336,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     );
                 if (!mounted) return;
                 if (!saved) {
-                  _showError(l10n.t('duplicatePhoneNumber'));
+                  await _showDuplicatePhoneDialog();
                   return;
                 }
                 navigator.pop();
@@ -1508,16 +1570,38 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   Future<void> _pickAndUploadPhoto() async {
-    final photoSavedLocallyMessage = AppLocalizations.of(
-      context,
-    ).t('photoSavedLocally');
+    if (_isSaving || _isPickingPhoto) return;
+    setState(() => _isPickingPhoto = true);
+    final l10n = AppLocalizations.of(context);
+    final photoSavedLocallyMessage = l10n.t('photoSavedLocally');
+
     try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
+      final deviceAuth = DeviceCredentialAuth();
+      final lockAvailable = await deviceAuth.isAvailable();
+      if (!mounted) return;
+      if (!lockAvailable) {
+        _showError(l10n.t('profilePhotoDeviceLockMissing'));
+        return;
+      }
+
+      final unlocked = await deviceAuth.authenticate(
+        reason: l10n.t('profilePhotoUnlockReason'),
       );
-      if (picked == null) return;
+      if (!mounted) return;
+      if (!unlocked) {
+        _showError(l10n.t('profilePhotoUnlockCancelled'));
+        return;
+      }
+
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+
+      final croppedPath = await ProfilePhotoCropScreen.open(
+        context,
+        picked.path,
+      );
+      if (croppedPath == null || croppedPath.isEmpty || !mounted) return;
 
       setState(() => _isSaving = true);
       await _saveLocalProfile(
@@ -1526,23 +1610,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         phone: _localPhone ?? (ref.read(authProvider).user?.phone ?? ''),
         bloodGroup:
             _localBloodGroup ?? (ref.read(authProvider).user?.bloodGroup ?? ''),
-        localPhotoPath: picked.path,
+        localPhotoPath: croppedPath,
       );
       unawaited(
         ref
             .read(profileDisplayProvider.notifier)
-            .update(photoPath: picked.path),
+            .update(photoPath: croppedPath),
       );
       if (!mounted) return;
       await _showSaveSuccess(
         AppLocalizations.of(context).t('profileSavedTitle'),
         AppLocalizations.of(context).t('profileSavedMessage'),
       );
-      unawaited(_syncProfilePhotoToServer(picked.path));
+      unawaited(_syncProfilePhotoToServer(croppedPath));
+      unawaited(AppActivityLog.instance.record('profile_photo_updated'));
     } catch (error) {
-      _showError('$photoSavedLocallyMessage ${ProfileFormatHelpers.extractError(error)}');
+      _showError(
+        '$photoSavedLocallyMessage ${ProfileFormatHelpers.extractError(error)}',
+      );
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() {
+          _isPickingPhoto = false;
+          _isSaving = false;
+        });
+      }
     }
   }
 

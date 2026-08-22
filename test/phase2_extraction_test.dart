@@ -244,7 +244,7 @@ void main() {
         ),
       );
       expect(find.text('Mom'), findsOneWidget);
-      expect(find.textContaining('9876543210'), findsOneWidget);
+      expect(find.textContaining('98765'), findsOneWidget);
     });
   });
 }

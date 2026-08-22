@@ -34,6 +34,10 @@ class ActivityLogRedactor {
       final key = entry.key.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
       if (_secretKeys.contains(key) || key.contains('password') || key.contains('token')) {
         out[entry.key] = '[redacted]';
+      } else if (key == 'lat' || key == 'lng' || key == 'message') {
+        out[entry.key] = entry.value.length > 400
+            ? '${entry.value.substring(0, 400)}…'
+            : entry.value;
       } else {
         out[entry.key] = scrubText(entry.value);
       }

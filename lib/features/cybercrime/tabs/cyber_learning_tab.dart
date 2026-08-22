@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/data/cyber_law_data.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/models/cybercrime_models.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/services/cyber_protection_service.dart';
@@ -197,11 +198,20 @@ class _TopicCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final content = topic.contentFor(langCode);
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(
+      onTap: () {
+        unawaited(
+          AppActivityLog.instance.record(
+            'cyber_topic',
+            message: 'Cyber crime topic opened: ${content.title}',
+          ),
+        );
+        Navigator.of(context).push(
         MaterialPageRoute(
+          settings: const RouteSettings(name: 'Cyber crime learning topic'),
           builder: (_) => CyberLawDetailPage(topic: topic, langCode: langCode),
         ),
-      ),
+      );
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(

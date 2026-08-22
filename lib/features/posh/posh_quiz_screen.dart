@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_certificate_screen.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_education_screen.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_quiz_data.dart';
@@ -51,6 +52,12 @@ class _POSHQuizScreenState extends State<POSHQuizScreen> {
       _certificateIssuedAt = state.certificateIssuedAt;
       _loadingProgress = false;
     });
+    unawaited(
+      AppActivityLog.instance.record(
+        'posh_quiz',
+        message: 'POSH quiz started',
+      ),
+    );
   }
 
   Future<void> _saveProgress() async {
@@ -167,7 +174,10 @@ class _POSHQuizScreenState extends State<POSHQuizScreen> {
       child: ElevatedButton.icon(
         onPressed: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const POSHCertificateScreen()),
+          MaterialPageRoute(
+            settings: const RouteSettings(name: 'POSH certificate'),
+            builder: (_) => const POSHCertificateScreen(),
+          ),
         ),
         icon: const Icon(Icons.workspace_premium_rounded),
         label: Text(l10n.t('viewCertificate')),
@@ -475,6 +485,10 @@ class _POSHQuizScreenState extends State<POSHQuizScreen> {
 
       if (score >= PoshQuizProgress.passScore) {
         _passedLevels.add(levelIndex);
+        unawaited(AppActivityLog.instance.record(
+          'posh_quiz',
+          message: 'POSH quiz level ${levelIndex + 1} passed ($score marks)',
+        ));
         if (levelIndex == _levels.length - 1) {
           _certificateReady = true;
           _certificateIssuedAt ??= DateTime.now();
@@ -508,6 +522,10 @@ class _POSHQuizScreenState extends State<POSHQuizScreen> {
           });
         }
       } else {
+        unawaited(AppActivityLog.instance.record(
+          'posh_quiz',
+          message: 'POSH quiz level ${levelIndex + 1} attempted ($score marks)',
+        ));
         await _saveProgress();
         if (!mounted) return;
         await showPremiumDialog<void>(
@@ -527,6 +545,7 @@ class _POSHQuizScreenState extends State<POSHQuizScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
+                    settings: const RouteSettings(name: 'POSH education'),
                     builder: (_) => const POSHEducationScreen(),
                   ),
                 );

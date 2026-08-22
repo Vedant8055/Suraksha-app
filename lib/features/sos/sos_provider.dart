@@ -373,11 +373,19 @@ class SOSNotifier extends StateNotifier<SOSState> {
         serverDelivery: SosDeliveryStatus.unavailable,
         smsDelivery: SosDeliveryStatus.unavailable,
       );
-      unawaited(AppActivityLog.instance.record('sos_blocked_no_contacts'));
+      unawaited(AppActivityLog.instance.record(
+        'sos_blocked_no_contacts',
+        message: 'SOS blocked — no emergency contacts saved',
+      ));
       return;
     }
 
-    unawaited(AppActivityLog.instance.record('sos_triggered'));
+    unawaited(AppActivityLog.instance.record(
+      'sos_triggered',
+      message:
+          'SOS triggered — ${contacts.length} emergency contact${contacts.length == 1 ? '' : 's'} on file',
+      details: {'contacts': '${contacts.length}'},
+    ));
 
     state = state.copyWith(
       isActive: true,
@@ -491,6 +499,15 @@ class SOSNotifier extends StateNotifier<SOSState> {
         smsSentCount: result.sentCount,
         smsTotalCount: result.total,
       );
+      unawaited(AppActivityLog.instance.record(
+        'sos_sms_sent',
+        message:
+            'SOS messages sent to ${result.sentCount} of ${result.total} emergency contacts',
+        details: {
+          'sent': '${result.sentCount}',
+          'total': '${result.total}',
+        },
+      ));
       if (!result.anySent && FeatureFlags.sosAutoSms) {
         state = state.copyWith(
           error: l10nSync('sosActivatedSmsPermissionNeeded'),
@@ -665,7 +682,7 @@ class SOSNotifier extends StateNotifier<SOSState> {
   }
 
   Future<void> cancelSOS() async {
-    unawaited(AppActivityLog.instance.record('sos_cancelled'));
+      unawaited(AppActivityLog.instance.record('sos_cancelled', message: 'SOS cancelled'));
     final currentEventId = state.sosEventId;
     final currentPosition = state.currentPosition;
 

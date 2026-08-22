@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:animate_do/animate_do.dart';
 import 'package:flutter/material.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_act_guide_screen.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_quiz_data.dart';
 import 'package:suraksha_women_safety_app/features/posh/posh_quiz_progress.dart';
@@ -34,6 +35,15 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
       _passedLevels = state.passedLevels;
       _loadingProgress = false;
     });
+  }
+
+  void _logStudyFolder(String title) {
+    unawaited(
+      AppActivityLog.instance.record(
+        'posh_folder',
+        message: 'POSH study folder opened: $title',
+      ),
+    );
   }
 
   @override
@@ -77,6 +87,11 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                             onLevelTap: (index, available) {
                               if (available) {
                                 setState(() => _activeLevelIndex = index);
+                                unawaited(AppActivityLog.instance.record(
+                                  'posh_folder',
+                                  message:
+                                      'POSH education — Level ${index + 1} opened',
+                                ));
                               } else {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
@@ -120,6 +135,7 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                   PoshStudySectionCard(
                     number: '1',
                     title: l10n.t('poshStudy1Title'),
+                    onOpen: () => _logStudyFolder(l10n.t('poshStudy1Title')),
                     icon: Icons.balance_rounded,
                     bullets: [
                       l10n.t('poshStudy1Bullet1'),
@@ -134,6 +150,7 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                   PoshStudySectionCard(
                     number: '2',
                     title: l10n.t('poshStudy2Title'),
+                    onOpen: () => _logStudyFolder(l10n.t('poshStudy2Title')),
                     icon: Icons.rule_folder_rounded,
                     bullets: [
                       l10n.t('poshStudy2Bullet1'),
@@ -148,6 +165,7 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                   PoshStudySectionCard(
                     number: '3',
                     title: l10n.t('poshStudy3Title'),
+                    onOpen: () => _logStudyFolder(l10n.t('poshStudy3Title')),
                     icon: Icons.shield_rounded,
                     bullets: [
                       l10n.t('poshStudy3Bullet1'),
@@ -162,6 +180,7 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                   PoshStudySectionCard(
                     number: '4',
                     title: l10n.t('poshStudy4Title'),
+                    onOpen: () => _logStudyFolder(l10n.t('poshStudy4Title')),
                     icon: Icons.info_outline_rounded,
                     bullets: [
                       l10n.t('poshStudy4Bullet1'),
@@ -179,6 +198,7 @@ class _POSHEducationScreenState extends State<POSHEducationScreen> {
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
+                          settings: const RouteSettings(name: 'POSH Act guide'),
                           builder: (_) => const POSHActGuideScreen(),
                         ),
                       ),

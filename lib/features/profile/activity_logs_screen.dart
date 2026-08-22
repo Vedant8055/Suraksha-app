@@ -12,6 +12,20 @@ import 'package:suraksha_women_safety_app/theme/app_theme.dart';
 
 enum _LogRangePreset { custom, last24h, yesterday }
 
+bool _isHumanReadable(ActivityLogEntry entry) {
+  if (entry.event == 'api_call' || entry.event == 'api_error') return false;
+  final text = '${entry.event} ${entry.displayMessage} ${entry.details}';
+  if (text.contains('PageRoute') ||
+      text.contains('DialogRoute') ||
+      text.contains('ModalBottomSheet') ||
+      text.contains('method=') ||
+      text.contains('status=') ||
+      text.contains('screen=/')) {
+    return false;
+  }
+  return true;
+}
+
 class ActivityLogsScreen extends StatefulWidget {
   const ActivityLogsScreen({super.key});
 
@@ -66,7 +80,7 @@ class _ActivityLogsScreenState extends State<ActivityLogsScreen> {
       final rows = await AppActivityLog.instance.store.readRange(_from, _to);
       if (!mounted) return;
       setState(() {
-        _entries = rows;
+        _entries = rows.where(_isHumanReadable).toList();
         _loading = false;
         _error = null;
       });
@@ -156,9 +170,11 @@ class _ActivityLogsScreenState extends State<ActivityLogsScreen> {
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     for (final row in chronological) {
       final flag = row.tampered ? ' [TAMPERED]' : '';
-      buf.writeln(
-        '${row.timestamp.toLocal().toIso8601String()} | ${row.event} | ${row.details}$flag',
-      );
+      final when =
+          DateFormat('dd MMM yyyy, HH:mm:ss').format(row.timestamp.toLocal());
+      final loc = row.locationLabel;
+      final locPart = loc == null ? '' : ' | $loc';
+      buf.writeln('$when | ${row.displayMessage}$locPart$flag');
     }
     final dir = await getTemporaryDirectory();
     final file = File(
@@ -167,6 +183,7 @@ class _ActivityLogsScreenState extends State<ActivityLogsScreen> {
     await file.writeAsString(buf.toString(), flush: true);
     await AppActivityLog.instance.record(
       'logs_exported',
+      message: 'Logs exported',
       details: {
         'from': _from.toIso8601String(),
         'to': _to.toIso8601String(),
@@ -747,7 +764,7 @@ class _LogEntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = _LogVisual.forEvent(entry);
-    final pairs = _parseDetailPairs(entry.details);
+    final location = entry.locationLabel;
     final hairline = entry.tampered
         ? const Color(0xFFF79009)
         : (isLight ? const Color(0xFFE4EAF3) : Colors.white.withValues(alpha: 0.08));
@@ -793,7 +810,7 @@ class _LogEntryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      style.title,
+                      entry.displayMessage,
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
@@ -828,53 +845,32 @@ class _LogEntryCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (pairs.isNotEmpty) ...[
+          if (location != null) ...[
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: pairs
-                  .map(
-                    (pair) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isLight
-                            ? const Color(0xFFF2F6FC)
-                            : Colors.white.withValues(alpha: 0.06),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '${pair.$1}  ',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: muted,
-                              ),
-                            ),
-                            TextSpan(
-                              text: pair.$2,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: textColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+              decoration: BoxDecoration(
+                color: isLight
+                    ? const Color(0xFFF2F6FC)
+                    : Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.place_rounded, size: 14, color: muted),
+                  const SizedBox(width: 6),
+                  Text(
+                    location,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: textColor,
                     ),
-                  )
-                  .toList(),
+                  ),
+                ],
+              ),
             ),
-          ] else if (entry.details.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(entry.details, style: TextStyle(color: muted, height: 1.35)),
           ],
           if (entry.tampered) ...[
             const SizedBox(height: 8),
@@ -909,38 +905,24 @@ class _LogVisual {
   final Color badgeColor;
 
   static _LogVisual forEvent(ActivityLogEntry entry) {
-    final details = _parseDetails(entry.details);
-    final status = int.tryParse(details['status'] ?? '');
-    final method = details['method'];
-
     switch (entry.event) {
-      case 'api_call':
-        final ok = status != null && status >= 200 && status < 400;
-        return _LogVisual(
-          title: 'API call',
-          icon: Icons.cloud_sync_rounded,
-          color: ok ? const Color(0xFF12B76A) : AppTheme.primaryColor,
-          badge: method ?? (status == null ? null : '$status'),
-          badgeColor: status == null
-              ? AppTheme.primaryColor
-              : (ok ? const Color(0xFF12B76A) : const Color(0xFFF04438)),
-        );
       case 'screen_opened':
         return const _LogVisual(
-          title: 'Screen opened',
+          title: 'Opened',
           icon: Icons.layers_rounded,
           color: AppTheme.primaryColor,
         );
-      case 'logs_opened':
+      case 'screen_closed':
         return const _LogVisual(
-          title: 'Logs opened',
-          icon: Icons.visibility_rounded,
-          color: AppTheme.secondaryColor,
+          title: 'Closed',
+          icon: Icons.logout_rounded,
+          color: Color(0xFF667085),
         );
+      case 'logs_opened':
       case 'logs_exported':
         return const _LogVisual(
-          title: 'Logs exported',
-          icon: Icons.ios_share_rounded,
+          title: 'Logs',
+          icon: Icons.visibility_rounded,
           color: AppTheme.secondaryColor,
         );
       case 'app_started':
@@ -950,31 +932,17 @@ class _LogVisual {
           color: AppTheme.primaryColor,
         );
       case 'login_success':
-        return const _LogVisual(
-          title: 'Signed in',
-          icon: Icons.login_rounded,
-          color: Color(0xFF12B76A),
-          badge: 'OK',
-          badgeColor: Color(0xFF12B76A),
-        );
-      case 'login_failed':
-        return const _LogVisual(
-          title: 'Sign-in failed',
-          icon: Icons.error_outline_rounded,
-          color: Color(0xFFF04438),
-          badge: 'Failed',
-          badgeColor: Color(0xFFF04438),
-        );
       case 'signup_success':
         return const _LogVisual(
-          title: 'Account created',
-          icon: Icons.person_add_alt_1_rounded,
+          title: 'OK',
+          icon: Icons.login_rounded,
           color: Color(0xFF12B76A),
         );
+      case 'login_failed':
       case 'signup_failed':
         return const _LogVisual(
-          title: 'Signup failed',
-          icon: Icons.person_off_outlined,
+          title: 'Failed',
+          icon: Icons.error_outline_rounded,
           color: Color(0xFFF04438),
         );
       case 'logout':
@@ -984,117 +952,61 @@ class _LogVisual {
           color: Color(0xFF667085),
         );
       case 'sos_triggered':
+      case 'sos_sms_sent':
         return const _LogVisual(
-          title: 'SOS triggered',
+          title: 'SOS',
           icon: Icons.sos_rounded,
           color: AppTheme.accentColor,
           badge: 'SOS',
           badgeColor: AppTheme.accentColor,
         );
       case 'sos_cancelled':
-        return const _LogVisual(
-          title: 'SOS cancelled',
-          icon: Icons.cancel_outlined,
-          color: Color(0xFFF79009),
-        );
       case 'sos_blocked_no_contacts':
         return const _LogVisual(
-          title: 'SOS blocked',
+          title: 'SOS',
           icon: Icons.block_rounded,
           color: Color(0xFFF79009),
         );
+      case 'scream_detection_on':
+      case 'scream_detection_off':
+        return const _LogVisual(
+          title: 'Scream',
+          icon: Icons.mic_rounded,
+          color: AppTheme.primaryColor,
+        );
+      case 'impact_detection_on':
+      case 'impact_detection_off':
+        return const _LogVisual(
+          title: 'Impact',
+          icon: Icons.sensors_rounded,
+          color: AppTheme.primaryColor,
+        );
+      case 'posh_quiz':
+      case 'posh_folder':
+        return const _LogVisual(
+          title: 'POSH',
+          icon: Icons.workspace_premium_rounded,
+          color: Color(0xFF8E7CF4),
+        );
+      case 'cyber_tab':
+      case 'cyber_topic':
+        return const _LogVisual(
+          title: 'Cyber',
+          icon: Icons.security_rounded,
+          color: AppTheme.primaryColor,
+        );
       case 'profile_photo_updated':
         return const _LogVisual(
-          title: 'Photo updated',
+          title: 'Photo',
           icon: Icons.photo_camera_rounded,
           color: AppTheme.primaryColor,
         );
-      case 'integrity_error':
-        return const _LogVisual(
-          title: 'Integrity warning',
-          icon: Icons.warning_amber_rounded,
-          color: Color(0xFFF79009),
-          badge: 'Check',
-          badgeColor: Color(0xFFF79009),
-        );
       default:
-        return _LogVisual(
-          title: _humanizeEvent(entry.event),
+        return const _LogVisual(
+          title: 'Activity',
           icon: Icons.bolt_rounded,
           color: AppTheme.primaryColor,
         );
     }
   }
-}
-
-Map<String, String> _parseDetails(String raw) {
-  if (raw.trim().isEmpty) return const {};
-  final map = <String, String>{};
-  for (final part in raw.split(';')) {
-    final trimmed = part.trim();
-    if (trimmed.isEmpty) continue;
-    final idx = trimmed.indexOf('=');
-    if (idx <= 0) continue;
-    map[trimmed.substring(0, idx).trim()] = trimmed.substring(idx + 1).trim();
-  }
-  return map;
-}
-
-String _humanizeEvent(String event) {
-  return event
-      .split('_')
-      .where((part) => part.isNotEmpty)
-      .map((part) => part[0].toUpperCase() + part.substring(1))
-      .join(' ');
-}
-
-List<(String, String)> _detailPairs(Map<String, String> map) {
-  const order = ['method', 'path', 'status', 'screen', 'from', 'to', 'count'];
-  final pairs = <(String, String)>[];
-  final used = <String>{};
-  for (final key in order) {
-    final value = map[key];
-    if (value == null || value.isEmpty) continue;
-    pairs.add((_prettyKey(key), _prettyValue(key, value)));
-    used.add(key);
-  }
-  for (final entry in map.entries) {
-    if (used.contains(entry.key) || entry.value.isEmpty) continue;
-    pairs.add((_prettyKey(entry.key), entry.value));
-  }
-  return pairs;
-}
-
-List<(String, String)> _parseDetailPairs(String raw) =>
-    _detailPairs(_parseDetails(raw));
-
-String _prettyKey(String key) {
-  switch (key) {
-    case 'method':
-      return 'Method';
-    case 'path':
-      return 'Path';
-    case 'status':
-      return 'Status';
-    case 'screen':
-      return 'Screen';
-    case 'from':
-      return 'From';
-    case 'to':
-      return 'To';
-    case 'count':
-      return 'Count';
-    default:
-      return _humanizeEvent(key);
-  }
-}
-
-String _prettyValue(String key, String value) {
-  if (key == 'screen') {
-    return value
-        .replaceAll(RegExp(r'<[^>]*>'), '')
-        .replaceAll('PageRouteBuilder', 'Screen')
-        .trim();
-  }
-  return value;
 }

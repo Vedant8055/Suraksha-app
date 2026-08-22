@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:suraksha_women_safety_app/config/api_config.dart';
 import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_interceptor.dart';
-import 'package:suraksha_women_safety_app/core/activity_log/activity_log_dio_interceptor.dart';
 import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
 import 'package:suraksha_women_safety_app/core/network/tls_pinning.dart';
 
@@ -23,7 +22,6 @@ class NetworkManager {
     _attachTlsPinning(_dio);
     _dio.interceptors.addAll([
       AuthInterceptor(dio: _dio),
-      ActivityLogDioInterceptor(),
       InterceptorsWrapper(
         onError: (error, handler) => handler.next(_normalizeError(error)),
       ),

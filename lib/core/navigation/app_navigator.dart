@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/activity_log_labels.dart';
 import 'package:suraksha_women_safety_app/features/ai_assistant/suraksha_ai_chat_screen.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/cybercrime_screen.dart';
 import 'package:suraksha_women_safety_app/features/maps/safety_map_screen.dart';
@@ -90,10 +91,17 @@ class AppNavigator {
   }) {
     if (!premiumTransition) {
       return Navigator.of(context).push<T>(
-        MaterialPageRoute<T>(builder: (_) => screen),
+        MaterialPageRoute<T>(
+          settings: RouteSettings(name: _routeNameFor(screen)),
+          builder: (_) => screen,
+        ),
       );
     }
     return pushPremium<T>(context, screen);
+  }
+
+  static String? _routeNameFor(Widget screen) {
+    return ActivityLogLabels.forWidget(screen);
   }
 
   /// Shared premium fade/slide transition used across the app.
@@ -103,6 +111,7 @@ class AppNavigator {
   ) {
     return Navigator.of(context).push<T>(
       PageRouteBuilder<T>(
+        settings: RouteSettings(name: _routeNameFor(screen)),
         pageBuilder: (context, animation, secondaryAnimation) => screen,
         transitionDuration: const Duration(milliseconds: 480),
         reverseTransitionDuration: const Duration(milliseconds: 340),

@@ -880,6 +880,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) return;
 
     final state = ref.read(screamDetectionProvider);
+    if (success) {
+      unawaited(AppActivityLog.instance.record(
+        enabled ? 'scream_detection_on' : 'scream_detection_off',
+        message: enabled
+            ? 'Scream detection turned on'
+            : 'Scream detection turned off',
+      ));
+    }
     final message = success
         ? enabled
               ? l10n.t('screamDetectionEnabled')
@@ -905,6 +913,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (!mounted) return;
 
     final state = ref.read(impactDetectionProvider);
+    if (success) {
+      unawaited(AppActivityLog.instance.record(
+        enabled ? 'impact_detection_on' : 'impact_detection_off',
+        message: enabled
+            ? 'Impact detection turned on'
+            : 'Impact detection turned off',
+      ));
+    }
     final message = success
         ? enabled
               ? l10n.t('impactDetectionEnabled')

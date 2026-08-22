@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/services/cyber_protection_service.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/tabs/cyber_assistant_tab.dart';
 import 'package:suraksha_women_safety_app/features/cybercrime/tabs/cyber_learning_tab.dart';
@@ -24,16 +25,34 @@ class _CyberCrimeScreenState extends ConsumerState<CyberCrimeScreen>
     with SingleTickerProviderStateMixin {
   final _service = CyberProtectionService();
   late final TabController _tabController;
+  int _loggedTab = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_onTabChanged);
     unawaited(ensureBackendReachable());
+  }
+
+  void _onTabChanged() {
+    if (!mounted || _tabController.indexIsChanging) return;
+    final index = _tabController.index;
+    if (index == _loggedTab) return;
+    _loggedTab = index;
+    final l10n = AppLocalizations.of(context);
+    const keys = ['aiAssist', 'report', 'vault', 'learn'];
+    unawaited(
+      AppActivityLog.instance.record(
+        'cyber_tab',
+        message: 'Cyber crime — ${l10n.t(keys[index])} opened',
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
   }

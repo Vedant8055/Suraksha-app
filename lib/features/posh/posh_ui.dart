@@ -142,17 +142,24 @@ class PoshStudySectionCard extends StatelessWidget {
     required this.title,
     required this.icon,
     required this.bullets,
+    this.onOpen,
   });
 
   final String number;
   final String title;
   final IconData icon;
   final List<String> bullets;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
     final colors = PoshColors(context);
-    return Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colors.card,
@@ -206,6 +213,8 @@ class PoshStudySectionCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }

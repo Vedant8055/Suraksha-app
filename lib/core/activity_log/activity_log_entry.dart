@@ -53,4 +53,29 @@ class ActivityLogEntry {
       tampered: hash != expected,
     );
   }
+
+  Map<String, String> get detailMap {
+    if (details.trim().isEmpty) return const {};
+    final map = <String, String>{};
+    for (final part in details.split(';')) {
+      final trimmed = part.trim();
+      final idx = trimmed.indexOf('=');
+      if (idx <= 0) continue;
+      map[trimmed.substring(0, idx).trim()] = trimmed.substring(idx + 1).trim();
+    }
+    return map;
+  }
+
+  String get displayMessage {
+    final message = detailMap['message']?.trim();
+    if (message != null && message.isNotEmpty) return message;
+    return event;
+  }
+
+  String? get locationLabel {
+    final lat = detailMap['lat'];
+    final lng = detailMap['lng'];
+    if (lat == null || lng == null || lat.isEmpty || lng.isEmpty) return null;
+    return '$lat, $lng';
+  }
 }

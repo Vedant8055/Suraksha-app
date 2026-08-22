@@ -34,7 +34,8 @@ class ActivityLogStore {
   }
 
   Future<Directory> _dir() async {
-    if (_overrideDir != null) return _overrideDir!;
+    final override = _overrideDir;
+    if (override != null) return override;
     final docs = await getApplicationDocumentsDirectory();
     final dir = Directory('${docs.path}/activity_logs');
     if (!await dir.exists()) {

@@ -15,6 +15,7 @@ import 'package:suraksha_women_safety_app/core/notifications/notification_onboar
 import 'package:suraksha_women_safety_app/core/notifications/push_notification_service.dart';
 import 'package:suraksha_women_safety_app/core/activity_log/activity_log_navigator_observer.dart';
 import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
+import 'package:suraksha_women_safety_app/core/navigation/app_navigator.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_gate.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
 import 'package:suraksha_women_safety_app/config/feature_flags.dart';

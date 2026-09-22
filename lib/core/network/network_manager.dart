@@ -61,6 +61,9 @@ class NetworkManager {
 
   /// Wakes a sleeping hosted backend (e.g. Render) before auth-critical calls.
   /// Safe to call often — skips if a successful wake happened recently.
+  ///
+  /// Uses a dedicated Dio client so a long cold-start probe cannot stall the
+  /// shared API client used by login itself.
   Future<bool> wakeBackendForAuth({bool force = false}) async {
     final recent = _lastWakeAt;
     if (!force &&
@@ -69,33 +72,39 @@ class NetworkManager {
       return true;
     }
 
-    _dio.options.baseUrl = ApiConfig.preferredBaseUrl;
     // Origin /health (ApiConfig base ends with /api).
     final healthUrl =
         ApiConfig.preferredBaseUrl.replaceAll(RegExp(r'/api/?$'), '/health');
 
-    for (var attempt = 0; attempt < 2; attempt++) {
-      try {
-        final response = await _dio.getUri(
-          Uri.parse(healthUrl),
-          options: Options(
-            connectTimeout: const Duration(seconds: 55),
-            sendTimeout: const Duration(seconds: 55),
-            receiveTimeout: const Duration(seconds: 55),
-            extra: const {
-              'skipAuth': true,
-              'skipAuthRefresh': true,
-            },
-          ),
-        );
-        if ((response.statusCode ?? 500) < 500) {
-          _lastWakeAt = DateTime.now();
-          _lastReachable = true;
-          return true;
+    final probe = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 90),
+        sendTimeout: const Duration(seconds: 90),
+        receiveTimeout: const Duration(seconds: 90),
+        headers: const {'Accept': 'application/json'},
+      ),
+    );
+    TlsPinning.attachToDio(probe);
+
+    try {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          final response = await probe.getUri(Uri.parse(healthUrl));
+          if ((response.statusCode ?? 500) < 500) {
+            _lastWakeAt = DateTime.now();
+            _lastReachable = true;
+            _dio.options.baseUrl = ApiConfig.preferredBaseUrl;
+            return true;
+          }
+        } catch (_) {
+          // First hits often only spin the dyno up; retry after a short pause.
+          if (attempt < 2) {
+            await Future<void>.delayed(Duration(seconds: 2 + attempt * 2));
+          }
         }
-      } catch (_) {
-        // Retry once — first hit often only wakes the dyno.
       }
+    } finally {
+      probe.close(force: true);
     }
     return false;
   }

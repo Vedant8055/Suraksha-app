@@ -55,14 +55,16 @@ class BackendUrlResolver {
   }
 
   static Future<bool> _probe(String baseUrl) async {
+    final origin = baseUrl.replaceAll(RegExp(r'/api/?$'), '');
     final dio = Dio(
       BaseOptions(
-        baseUrl: baseUrl,
+        baseUrl: origin,
         connectTimeout: const Duration(seconds: 2),
         receiveTimeout: const Duration(seconds: 2),
       ),
     );
     try {
+      // Origin /health — not /api/health (Express mounts API under /api).
       final response = await dio.get('/health');
       return response.statusCode == 200;
     } catch (_) {
@@ -79,8 +81,8 @@ class BackendUrlResolver {
       final probe = Dio(
         BaseOptions(
           baseUrl: ApiConfig.preferredBaseUrl.replaceAll(RegExp(r'/api/?$'), ''),
-          connectTimeout: const Duration(seconds: 55),
-          receiveTimeout: const Duration(seconds: 55),
+          connectTimeout: const Duration(seconds: 90),
+          receiveTimeout: const Duration(seconds: 90),
         ),
       );
       try {

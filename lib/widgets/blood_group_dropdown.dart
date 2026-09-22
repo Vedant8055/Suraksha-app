@@ -21,7 +21,7 @@ class BloodGroupDropdown extends StatelessWidget {
 
     return DropdownButtonFormField<String>(
       key: ValueKey(selected ?? 'none'),
-      value: selected,
+      initialValue: selected,
       isExpanded: true,
       decoration: InputDecoration(
         labelText: l10n.t('bloodGroup'),

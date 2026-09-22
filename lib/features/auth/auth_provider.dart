@@ -787,17 +787,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required Map<String, dynamic> data,
   }) async {
     _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
-    // Wake sleeping Render dyno before auth — avoids connect timeouts on login.
-    await NetworkManager.instance.wakeBackendForAuth();
+
+    // Kick a wake in parallel — do NOT await a full health probe before login.
+    // Serial wake(55s×2) + login(90s) was stranding users on Render cold starts;
+    // the login POST itself also wakes the dyno when it reaches the host.
+    final wakeFuture = NetworkManager.instance.wakeBackendForAuth();
 
     Future<Response<dynamic>> send() => _dio.post(
       path,
       data: data,
       options: Options(
         extra: const {'skipAuthRefresh': true},
-        connectTimeout: const Duration(seconds: 60),
-        sendTimeout: const Duration(seconds: 60),
-        receiveTimeout: const Duration(seconds: 75),
+        connectTimeout: const Duration(seconds: 120),
+        sendTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 120),
       ),
     );
 
@@ -808,23 +811,30 @@ class AuthNotifier extends StateNotifier<AuthState> {
                 error.type == DioExceptionType.receiveTimeout ||
                 error.type == DioExceptionType.sendTimeout));
 
+    // Brief head-start only: if the server is already warm, wake returns fast.
+    await Future.any<void>([
+      wakeFuture.then((_) {}),
+      Future<void>.delayed(const Duration(seconds: 4)),
+    ]);
+
     try {
-      return await send().timeout(const Duration(seconds: 90));
+      return await send().timeout(const Duration(seconds: 180));
     } on DioException catch (error) {
       if (isTimeout(error) || BackendUrlResolver.isConnectionError(error)) {
+        await wakeFuture.timeout(
+          const Duration(seconds: 120),
+          onTimeout: () => false,
+        );
         await NetworkManager.instance.wakeBackendForAuth(force: true);
         await BackendUrlResolver.clearOverride();
-        if (await NetworkManager.instance.recoverConnection() ||
-            isTimeout(error)) {
-          _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
-          return send().timeout(const Duration(seconds: 90));
-        }
+        _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
+        return send().timeout(const Duration(seconds: 180));
       }
       rethrow;
     } on TimeoutException {
       await NetworkManager.instance.wakeBackendForAuth(force: true);
       try {
-        return await send().timeout(const Duration(seconds: 90));
+        return await send().timeout(const Duration(seconds: 180));
       } on TimeoutException {
         throw DioException(
           requestOptions: RequestOptions(path: path),

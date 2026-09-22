@@ -1,8 +1,6 @@
-import 'dart:io';
+import 'dart:async';
 
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
-import 'package:flutter/foundation.dart';
 import 'package:suraksha_women_safety_app/config/api_config.dart';
 import 'package:suraksha_women_safety_app/localization/l10n_helper.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_interceptor.dart';
@@ -14,12 +12,14 @@ class NetworkManager {
     _dio = Dio(
       BaseOptions(
         baseUrl: ApiConfig.preferredBaseUrl,
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 30),
+        // Render free/starter cold starts can exceed 15s; keep a higher floor
+        // so login/SOS are not killed mid-handshake.
+        connectTimeout: const Duration(seconds: 45),
+        receiveTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 45),
       ),
     );
-    _attachTlsPinning(_dio);
+    TlsPinning.attachToDio(_dio);
     _dio.interceptors.addAll([
       AuthInterceptor(dio: _dio),
       InterceptorsWrapper(
@@ -32,21 +32,7 @@ class NetworkManager {
 
   late final Dio _dio;
   bool? _lastReachable;
-
-  void _attachTlsPinning(Dio dio) {
-    // Certificate pinning is a dart:io concern (mobile/desktop).
-    if (kIsWeb) return;
-    dio.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: () {
-        final client = HttpClient();
-        // System trust still applies; validateCertificate adds pin checks.
-        return client;
-      },
-      validateCertificate: (cert, host, port) {
-        return TlsPinning.validateCertificate(cert, host, port);
-      },
-    );
-  }
+  DateTime? _lastWakeAt;
 
   Future<bool> ensureReachable({bool force = false}) async {
     if (!force && _lastReachable != null) return _lastReachable!;
@@ -73,11 +59,54 @@ class NetworkManager {
     return _lastReachable!;
   }
 
+  /// Wakes a sleeping hosted backend (e.g. Render) before auth-critical calls.
+  /// Safe to call often — skips if a successful wake happened recently.
+  Future<bool> wakeBackendForAuth({bool force = false}) async {
+    final recent = _lastWakeAt;
+    if (!force &&
+        recent != null &&
+        DateTime.now().difference(recent) < const Duration(seconds: 90)) {
+      return true;
+    }
+
+    _dio.options.baseUrl = ApiConfig.preferredBaseUrl;
+    // Origin /health (ApiConfig base ends with /api).
+    final healthUrl =
+        ApiConfig.preferredBaseUrl.replaceAll(RegExp(r'/api/?$'), '/health');
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _dio.getUri(
+          Uri.parse(healthUrl),
+          options: Options(
+            connectTimeout: const Duration(seconds: 55),
+            sendTimeout: const Duration(seconds: 55),
+            receiveTimeout: const Duration(seconds: 55),
+            extra: const {
+              'skipAuth': true,
+              'skipAuthRefresh': true,
+            },
+          ),
+        );
+        if ((response.statusCode ?? 500) < 500) {
+          _lastWakeAt = DateTime.now();
+          _lastReachable = true;
+          return true;
+        }
+      } catch (_) {
+        // Retry once — first hit often only wakes the dyno.
+      }
+    }
+    return false;
+  }
+
   /// Probes backend URLs after the UI is visible — never blocks cold start.
   Future<void> warmUpInBackground() async {
     try {
       final ok = await BackendUrlResolver.applyToDio(_dio);
       _lastReachable = ok;
+      // Production: wake Render so the first login is less likely to time out.
+      unawaited(wakeBackendForAuth(force: true));
     } catch (_) {
       _lastReachable = false;
     }

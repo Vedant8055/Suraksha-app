@@ -75,6 +75,17 @@ class AppLocalizations {
           'Enter the 6-digit code from your email. If you already received it, type it here and continue.',
       'verifyOtp': 'VERIFY OTP',
       'otpSent': 'OTP sent to your email. Enter it below.',
+      'otpSentToEmail':
+          'OTP sent to {email}. Check Inbox and Spam/Junk. Subject starts with “Suraksha OTP”.',
+      'otpEnterHintSpam':
+          'Enter the 6-digit code from your email. Also check Spam/Junk. Use the same email you used at signup.',
+      'otpEmailNotRegistered':
+          'No Suraksha account uses this email. Use the exact email from signup, or sign in with phone and add/update email in Profile.',
+      'otpEmailAlreadyRegistered':
+          'This email is already registered. Sign in, or use Forgot Password to reset.',
+      'otpEmailUnavailable':
+          'This email cannot receive an OTP right now. Try a different address.',
+      'otpSendingWait': 'Sending OTP… server may take up to a minute to wake',
       'otpSendFailed': 'Could not send OTP. Check your details and try again.',
       'otpSendCheckInbox':
           'If an email arrived with a code, enter it below. If not, wait a moment and tap Resend.',
@@ -1550,9 +1561,9 @@ class AppLocalizations {
       'privacyActionFailed': 'Could not complete that privacy action.',
       'authResetPasswordFailed': 'Could not reset password. Try again.',
       'authRequestTimedOut':
-          'Request timed out. Check your connection and try again.\nServer: {server}',
+          'The server is taking longer than usual (it may be waking up). Please wait a moment and try again.',
       'authCouldNotReachServer':
-          'Could not reach server at {server}. Ensure backend is running and phone/PC use the same Wi‑Fi.',
+          'Could not reach Suraksha servers. Check your internet connection and try again.',
       'networkRequestFailed': 'Network request failed',
       'invalidDetails': 'Invalid details.',
       'networkRequestTimedOut': 'Request timed out. Please try again.',
@@ -1590,6 +1601,16 @@ class AppLocalizations {
           'This capability is turned off in this build.',
       'partialDeliveryBanner':
           'Partial success: some emergency alerts were delivered.',
+      'sosSmsOnlyBanner':
+          'SMS alerts were sent, but live tracking is not available yet. Retry when you have network.',
+      'smsAlertsSentNoLiveTrack':
+          'SMS alerts were sent. Live location sharing is not active yet:',
+      'emergencySmsOnlyNoLiveTrack':
+          'SMS alert mode — live tracking unavailable',
+      'emergencyContactsAlertedLabel': 'Emergency contacts alerted:',
+      'sosLiveLocationNotificationTitle': 'Suraksha SOS active',
+      'sosLiveLocationNotificationText':
+          'Sharing your live location with emergency contacts.',
       'sosSafeConfirmTitle': 'Are you safe now?',
       'sosSafeConfirmMessage':
           'This will end live tracking and attempt to send an “I’m safe” message to your emergency contacts.',
@@ -1806,6 +1827,17 @@ class AppLocalizations {
           'ईमेल में मिला 6 अंकों का कोड यहाँ लिखें। अगर कोड पहले आ चुका है, तो यहीं दर्ज कर आगे बढ़ें।',
       'verifyOtp': 'OTP सत्यापित करें',
       'otpSent': 'OTP आपके ईमेल पर भेजा गया। नीचे दर्ज करें।',
+      'otpSentToEmail':
+          '{email} पर OTP भेजा गया। Inbox और Spam/Junk जाँचें। Subject “Suraksha OTP” से शुरू होता है।',
+      'otpEnterHintSpam':
+          'ईमेल का 6 अंकों का कोड लिखें। Spam/Junk भी देखें। वही ईमेल उपयोग करें जिससे साइन अप किया था।',
+      'otpEmailNotRegistered':
+          'इस ईमेल से कोई Suraksha खाता नहीं मिला। साइन अप वाला सही ईमेल लिखें, या फोन से साइन इन कर Profile में ईमेल जोड़ें/अपडेट करें।',
+      'otpEmailAlreadyRegistered':
+          'यह ईमेल पहले से पंजीकृत है। साइन इन करें, या पासवर्ड रीसेट के लिए Forgot Password उपयोग करें।',
+      'otpEmailUnavailable':
+          'इस ईमेल पर अभी OTP नहीं भेजा जा सकता। कोई अन्य पता आज़माएँ।',
+      'otpSendingWait': 'OTP भेजा जा रहा है… सर्वर को जागने में एक मिनट लग सकता है',
       'otpSendFailed': 'OTP नहीं भेजा जा सका। विवरण जाँचकर फिर कोशिश करें।',
       'otpSendCheckInbox':
           'अगर ईमेल में कोड आया है तो नीचे लिखें। नहीं आया हो तो थोड़ा रुककर Resend दबाएँ।',
@@ -3159,9 +3191,9 @@ class AppLocalizations {
       'authPasswordMinLength': 'पासवर्ड कम से कम 8 अक्षर का होना चाहिए।',
       'authResetPasswordFailed': 'पासवर्ड रीसेट नहीं हो सका। पुनः प्रयास करें।',
       'authRequestTimedOut':
-          'अनुरोध समय समाप्त। अपना कनेक्शन जाँचें और पुनः प्रयास करें।\nसर्वर: {server}',
+          'सर्वर平时 से अधिक समय ले रहा है (शायद शुरू हो रहा है)। कुछ क्षण प्रतीक्षा कर फिर प्रयास करें।',
       'authCouldNotReachServer':
-          'सर्वर {server} तक नहीं पहुँचा जा सका। सुनिश्चित करें कि बैकएंड चल रहा है।',
+          'Suraksha सर्वर तक नहीं पहुँचा जा सका। अपना इंटरनेट जाँचें और पुनः प्रयास करें।',
       'networkRequestFailed': 'नेटवर्क अनुरोध विफल',
       'invalidDetails': 'अमान्य विवरण।',
       'networkRequestTimedOut': 'अनुरोध समय समाप्त। कृपया पुनः प्रयास करें।',
@@ -3188,6 +3220,16 @@ class AppLocalizations {
       'featureFlagDisabledHint': 'इस बिल्ड में यह क्षमता बंद है।',
       'partialDeliveryBanner':
           'आंशिक सफलता: कुछ आपातकालीन अलर्ट पहुँचे।',
+      'sosSmsOnlyBanner':
+          'SMS अलर्ट भेजे गए, लेकिन लाइव ट्रैकिंग अभी उपलब्ध नहीं है। नेटवर्क आने पर Retry करें।',
+      'smsAlertsSentNoLiveTrack':
+          'SMS अलर्ट भेजे गए। लाइव लोकेशन साझा करना अभी सक्रिय नहीं है:',
+      'emergencySmsOnlyNoLiveTrack':
+          'SMS अलर्ट मोड — लाइव ट्रैकिंग उपलब्ध नहीं',
+      'emergencyContactsAlertedLabel': 'आपातकालीन संपर्कों को सूचित किया गया:',
+      'sosLiveLocationNotificationTitle': 'Suraksha SOS सक्रिय',
+      'sosLiveLocationNotificationText':
+          'आपकी लाइव लोकेशन आपातकालीन संपर्कों के साथ साझा हो रही है।',
       'dashboardPoshLabel': 'POSH',
       'communityAlertStayAwareFallback':
           'मानचित्र पर नज़दीकी स्थिति देखें और चलते समय सतर्क रहें।',
@@ -3354,6 +3396,17 @@ class AppLocalizations {
           'ईमेलमधील 6 अंकी कोड इथे लिहा. कोड आधीच आला असेल तर इथे टाकून पुढे जा.',
       'verifyOtp': 'OTP पडताळा',
       'otpSent': 'OTP तुमच्या ईमेलवर पाठवला. खाली लिहा.',
+      'otpSentToEmail':
+          '{email} वर OTP पाठवला. Inbox आणि Spam/Junk तपासा. Subject “Suraksha OTP” ने सुरू होते.',
+      'otpEnterHintSpam':
+          'ईमेलमधील 6 अंकी कोड लिहा. Spam/Junk देखील तपासा. साइन अप करताना वापरलेलाच ईमेल वापरा.',
+      'otpEmailNotRegistered':
+          'या ईमेलने कोणतेही Suraksha खाते सापडले नाही. साइन अपमधील अचूक ईमेल वापरा, किंवा फोनने साइन इन करून Profile मध्ये ईमेल जोडा/अपडेट करा.',
+      'otpEmailAlreadyRegistered':
+          'हा ईमेल आधीच नोंदणीकृत आहे. साइन इन करा, किंवा पासवर्ड रीसेटसाठी Forgot Password वापरा.',
+      'otpEmailUnavailable':
+          'या ईमेलवर सध्या OTP पाठवता येत नाही. दुसरा पत्ता वापरून पहा.',
+      'otpSendingWait': 'OTP पाठवत आहोत… सर्व्हर जागे होण्यासाठी एक मिनिट लागू शकतो',
       'otpSendFailed': 'OTP पाठवता आला नाही. तपशील तपासून पुन्हा प्रयत्न करा.',
       'otpSendCheckInbox':
           'ईमेलमध्ये कोड आला असेल तर खाली लिहा. नसेल तर थोडे थांबून Resend दाबा.',
@@ -4705,9 +4758,9 @@ class AppLocalizations {
       'authPasswordMinLength': 'पासवर्ड किमान 8 अक्षरे असावा.',
       'authResetPasswordFailed': 'पासवर्ड रीसेट करता आला नाही. पुन्हा प्रयत्न करा.',
       'authRequestTimedOut':
-          'विनंती वेळ संपली. कनेक्शन तपासा आणि पुन्हा प्रयत्न करा.\nसर्वर: {server}',
+          'सर्व्हरला नेहमीपेक्षा जास्त वेळ लागत आहे (तो सुरू होत असू शकतो). थोडा वेळ थांबा आणि पुन्हा प्रयत्न करा.',
       'authCouldNotReachServer':
-          'सर्वर {server} पर्यंत पोहोचता आले नाही. बॅकएंड चालू आहे याची खात्री करा.',
+          'Suraksha सर्व्हरपर्यंत पोहोचता आले नाही. इंटरनेट तपासा आणि पुन्हा प्रयत्न करा.',
       'networkRequestFailed': 'नेटवर्क विनंती अयशस्वी',
       'invalidDetails': 'अवैध तपशील.',
       'networkRequestTimedOut': 'विनंती वेळ संपली. पुन्हा प्रयत्न करा.',
@@ -4734,6 +4787,16 @@ class AppLocalizations {
       'featureFlagDisabledHint': 'या बिल्डमध्ये ही क्षमता बंद आहे.',
       'partialDeliveryBanner':
           'अंशतः यशस्वी: काही आपत्कालीन सूचना पोहोचल्या.',
+      'sosSmsOnlyBanner':
+          'SMS सूचना पाठवल्या, पण लाइव्ह ट्रॅकिंग अद्याप उपलब्ध नाही. नेटवर्क आल्यावर Retry करा.',
+      'smsAlertsSentNoLiveTrack':
+          'SMS सूचना पाठवल्या. लाइव्ह स्थान शेअरिंग अद्याप सक्रिय नाही:',
+      'emergencySmsOnlyNoLiveTrack':
+          'SMS सूचना मोड — लाइव्ह ट्रॅकिंग उपलब्ध नाही',
+      'emergencyContactsAlertedLabel': 'आपत्कालीन संपर्कांना सूचित केले:',
+      'sosLiveLocationNotificationTitle': 'Suraksha SOS सक्रिय',
+      'sosLiveLocationNotificationText':
+          'तुमचे लाइव्ह स्थान आपत्कालीन संपर्कांसोबत शेअर होत आहे.',
       'dashboardPoshLabel': 'POSH',
       'communityAlertStayAwareFallback':
           'नकाशावर जवळपासची परिस्थिती पहा आणि हलताना सजग राहा.',

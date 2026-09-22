@@ -75,7 +75,22 @@ class BackendUrlResolver {
   static Future<bool> recoverConnection(Dio dio) async {
     if (!kDebugMode) {
       dio.options.baseUrl = ApiConfig.preferredBaseUrl;
-      return _probe(ApiConfig.preferredBaseUrl);
+      // Production: allow long enough for a cold Render wake on /health.
+      final probe = Dio(
+        BaseOptions(
+          baseUrl: ApiConfig.preferredBaseUrl.replaceAll(RegExp(r'/api/?$'), ''),
+          connectTimeout: const Duration(seconds: 55),
+          receiveTimeout: const Duration(seconds: 55),
+        ),
+      );
+      try {
+        final response = await probe.get('/health');
+        return (response.statusCode ?? 500) < 500;
+      } catch (_) {
+        return false;
+      } finally {
+        probe.close(force: true);
+      }
     }
     await clearOverride();
     for (final candidate in candidateUrls()) {

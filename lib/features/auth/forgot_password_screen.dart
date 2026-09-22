@@ -26,6 +26,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   final _confirmPasswordController = TextEditingController();
 
   bool _otpSent = false;
+  bool _isSendingOtp = false;
   bool _passwordVisible = false;
   int _resendSeconds = 0;
   Timer? _resendTimer;
@@ -73,21 +74,24 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     }
 
     ref.read(authProvider.notifier).clearError();
+    setState(() => _isSendingOtp = true);
     final result = await ref
         .read(authProvider.notifier)
         .sendForgotPasswordOtp(email);
 
     if (!mounted) return;
+    setState(() => _isSendingOtp = false);
 
     if (!result.success) {
       if (result.allowEnterOtp) {
+        // Rate-limit only: a previous OTP may already be in the inbox.
         setState(() => _otpSent = true);
         if (result.retryAfterSeconds != null) {
           _startResendTimer(result.retryAfterSeconds!);
         }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result.error ?? l10n.t('otpSendCheckInbox')),
+            content: Text(result.error ?? l10n.t('otpSendFailed')),
           ),
         );
         return;
@@ -105,7 +109,12 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     _startResendTimer(result.resendAfterSeconds);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.t('otpSent'))),
+      SnackBar(
+        content: Text(
+          l10n.t('otpSentToEmail').replaceAll('{email}', email),
+        ),
+        duration: const Duration(seconds: 5),
+      ),
     );
   }
 
@@ -206,31 +215,49 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                       icon: Icons.email_outlined,
                       keyboardType: TextInputType.emailAddress,
                       autofillHints: const [AutofillHints.email],
-                      enabled: !authState.isLoading,
+                      enabled: !authState.isLoading && !_isSendingOtp,
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
+                      height: 48,
                       child: OutlinedButton(
                         onPressed: authState.isLoading ||
+                                _isSendingOtp ||
                                 (_otpSent && _resendSeconds > 0)
                             ? null
                             : _sendOtp,
-                        child: Text(
-                          _otpSent
-                              ? (_resendSeconds > 0
-                                  ? l10n
-                                      .t('resendOtpIn')
-                                      .replaceAll('{seconds}', '$_resendSeconds')
-                                  : l10n.t('resendOtp'))
-                              : l10n.t('sendOtp'),
-                        ),
+                        child: _isSendingOtp
+                            ? Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(l10n.t('otpSendingWait')),
+                                ],
+                              )
+                            : Text(
+                                _otpSent
+                                    ? (_resendSeconds > 0
+                                        ? l10n.t('resendOtpIn').replaceAll(
+                                            '{seconds}',
+                                            '$_resendSeconds',
+                                          )
+                                        : l10n.t('resendOtp'))
+                                    : l10n.t('sendOtp'),
+                              ),
                       ),
                     ),
                     if (_otpSent) ...[
                       const SizedBox(height: 12),
                       Text(
-                        l10n.t('otpEnterHint'),
+                        l10n.t('otpEnterHintSpam'),
                         style: const TextStyle(
                           fontSize: 13.5,
                           height: 1.35,

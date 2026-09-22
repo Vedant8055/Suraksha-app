@@ -328,6 +328,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
         data: data,
       );
       final body = response.data as Map<String, dynamic>;
+      // Backend anti-enumeration returns 200 with dispatched:false when the
+      // email is ineligible (e.g. already registered for signup).
+      final dispatched = body.containsKey('dispatched')
+          ? body['dispatched'] == true
+          : true;
+      if (!dispatched) {
+        final errorKey = purpose == 'register'
+            ? 'otpEmailAlreadyRegistered'
+            : purpose == 'reset_password'
+                ? 'otpEmailNotRegistered'
+                : 'otpEmailUnavailable';
+        return OtpSendResult(
+          success: false,
+          allowEnterOtp: false,
+          error: await _localized(errorKey),
+          resendAfterSeconds:
+              (body['resendAfterSeconds'] as num?)?.toInt() ?? 60,
+        );
+      }
       return OtpSendResult(
         success: true,
         allowEnterOtp: true,
@@ -489,8 +508,49 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<OtpSendResult> sendForgotPasswordOtp(String email) {
-    return sendOtp(email: email, purpose: 'reset_password');
+  Future<OtpSendResult> sendForgotPasswordOtp(String email) async {
+    // Forgot-password must not soft-fail like signup: timeouts must not pretend
+    // an OTP was emailed.
+    try {
+      final response = await _authPost(
+        ApiConstants.otpSend,
+        data: {
+          'email': email.trim().toLowerCase(),
+          'purpose': 'reset_password',
+        },
+      );
+      final body = response.data as Map<String, dynamic>;
+      // Older backends omit `dispatched`; treat missing as true for compatibility.
+      final dispatched = body.containsKey('dispatched')
+          ? body['dispatched'] == true
+          : true;
+      return OtpSendResult(
+        success: dispatched,
+        allowEnterOtp: dispatched,
+        error: dispatched ? null : await _localized('otpEmailNotRegistered'),
+        resendAfterSeconds: (body['resendAfterSeconds'] as num?)?.toInt() ?? 60,
+      );
+    } on DioException catch (error) {
+      final parsed = await _messageFromDio(
+        error,
+        fallbackKey: 'otpSendFailed',
+      );
+      // Only rate-limit keeps the OTP field open (a prior send may have worked).
+      final allowEnter = error.response?.statusCode == 429;
+      return OtpSendResult(
+        success: false,
+        allowEnterOtp: allowEnter,
+        error: parsed.message,
+        retryAfterSeconds: parsed.retryAfterSeconds,
+        resendAfterSeconds: parsed.retryAfterSeconds ?? 60,
+      );
+    } catch (_) {
+      return OtpSendResult(
+        success: false,
+        allowEnterOtp: false,
+        error: await _localized('otpSendFailed'),
+      );
+    }
   }
 
   Future<bool> resetPassword({
@@ -727,32 +787,50 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required Map<String, dynamic> data,
   }) async {
     _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
+    // Wake sleeping Render dyno before auth — avoids connect timeouts on login.
+    await NetworkManager.instance.wakeBackendForAuth();
 
     Future<Response<dynamic>> send() => _dio.post(
       path,
       data: data,
       options: Options(
         extra: const {'skipAuthRefresh': true},
-        sendTimeout: const Duration(seconds: 30),
+        connectTimeout: const Duration(seconds: 60),
+        sendTimeout: const Duration(seconds: 60),
         receiveTimeout: const Duration(seconds: 75),
       ),
     );
 
+    bool isTimeout(Object error) =>
+        error is TimeoutException ||
+        (error is DioException &&
+            (error.type == DioExceptionType.connectionTimeout ||
+                error.type == DioExceptionType.receiveTimeout ||
+                error.type == DioExceptionType.sendTimeout));
+
     try {
-      return await send().timeout(const Duration(seconds: 80));
+      return await send().timeout(const Duration(seconds: 90));
     } on DioException catch (error) {
-      if (!BackendUrlResolver.isConnectionError(error)) rethrow;
-      await BackendUrlResolver.clearOverride();
-      if (await NetworkManager.instance.recoverConnection()) {
-        _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
-        return send().timeout(const Duration(seconds: 80));
+      if (isTimeout(error) || BackendUrlResolver.isConnectionError(error)) {
+        await NetworkManager.instance.wakeBackendForAuth(force: true);
+        await BackendUrlResolver.clearOverride();
+        if (await NetworkManager.instance.recoverConnection() ||
+            isTimeout(error)) {
+          _dio.options.baseUrl = NetworkManager.instance.currentBaseUrl;
+          return send().timeout(const Duration(seconds: 90));
+        }
       }
       rethrow;
     } on TimeoutException {
-      throw DioException(
-        requestOptions: RequestOptions(path: path),
-        type: DioExceptionType.receiveTimeout,
-      );
+      await NetworkManager.instance.wakeBackendForAuth(force: true);
+      try {
+        return await send().timeout(const Duration(seconds: 90));
+      } on TimeoutException {
+        throw DioException(
+          requestOptions: RequestOptions(path: path),
+          type: DioExceptionType.receiveTimeout,
+        );
+      }
     }
   }
 
@@ -782,9 +860,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.receiveTimeout ||
         error.type == DioExceptionType.sendTimeout) {
-      final base = NetworkManager.instance.currentBaseUrl;
       return _AuthMessage(
-        message: await _localized('authRequestTimedOut', params: {'server': base}),
+        message: await _localized('authRequestTimedOut'),
       );
     }
     if (error.response?.statusCode == 503) {
@@ -801,9 +878,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       );
     }
     if (error.type == DioExceptionType.connectionError) {
-      final base = NetworkManager.instance.currentBaseUrl;
       return _AuthMessage(
-        message: await _localized('authCouldNotReachServer', params: {'server': base}),
+        message: await _localized('authCouldNotReachServer'),
       );
     }
     return _AuthMessage(message: await _localized(fallbackKey));

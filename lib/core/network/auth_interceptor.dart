@@ -8,6 +8,7 @@ import 'package:suraksha_women_safety_app/config/api_config.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_token_storage.dart';
 import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
+import 'package:suraksha_women_safety_app/core/network/tls_pinning.dart';
 
 typedef AuthSessionInvalidatedCallback = void Function();
 
@@ -22,14 +23,22 @@ class AuthInterceptor extends QueuedInterceptor {
   static AuthSessionInvalidatedCallback? onSessionInvalidated;
   static VoidCallback? onTokensRefreshed;
 
-  static final Dio _refreshDio = Dio(
-    BaseOptions(
-      baseUrl: ApiConfig.preferredBaseUrl,
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
-      headers: {'Accept': 'application/json'},
-    ),
-  );
+  /// Separate Dio so refresh never re-enters [AuthInterceptor], but still
+  /// uses the same release TLS leaf pins as [NetworkManager].
+  static final Dio _refreshDio = _createPinnedRefreshDio();
+
+  static Dio _createPinnedRefreshDio() {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: ApiConfig.preferredBaseUrl,
+        connectTimeout: const Duration(seconds: 45),
+        receiveTimeout: const Duration(seconds: 45),
+        headers: {'Accept': 'application/json'},
+      ),
+    );
+    TlsPinning.attachToDio(dio);
+    return dio;
+  }
 
   static Completer<bool>? _refreshCompleter;
 

@@ -295,14 +295,16 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                                   size: 20,
                                 ),
                           label: Text(
-                            _otpSent
-                                ? (_resendSeconds > 0
-                                    ? l10n.t('resendOtpIn').replaceAll(
-                                        '{seconds}',
-                                        '$_resendSeconds',
-                                      )
-                                    : l10n.t('resendOtp'))
-                                : l10n.t('sendOtp'),
+                            _isSendingOtp
+                                ? l10n.t('otpSendingWait')
+                                : _otpSent
+                                    ? (_resendSeconds > 0
+                                        ? l10n.t('resendOtpIn').replaceAll(
+                                            '{seconds}',
+                                            '$_resendSeconds',
+                                          )
+                                        : l10n.t('resendOtp'))
+                                    : l10n.t('sendOtp'),
                           ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppTheme.primaryColor,

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -67,6 +69,20 @@ class SOSState {
     this.smsSentCount = 0,
     this.smsTotalCount = 0,
   });
+
+  /// Live share URL present and server create succeeded.
+  bool get hasLiveTracking =>
+      trackingUrl != null &&
+      trackingUrl!.isNotEmpty &&
+      serverDelivery == SosDeliveryStatus.sent;
+
+  /// SMS reached at least some contacts, but live track is not available.
+  bool get isSmsOnlyWithoutLiveTrack {
+    final smsOk = smsDelivery == SosDeliveryStatus.sent ||
+        smsDelivery == SosDeliveryStatus.partial;
+    if (!smsOk) return false;
+    return !hasLiveTracking;
+  }
 
   SOSState copyWith({
     bool? isActive,
@@ -632,53 +648,76 @@ class SOSNotifier extends StateNotifier<SOSState> {
 
   void _startLiveTracking() {
     _positionSubscription?.cancel();
-    _positionSubscription =
-        Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
+    // Android: Geolocator starts a location foreground service so tracking
+    // continues with the screen off. iOS relies on background location modes.
+    final LocationSettings locationSettings = (!kIsWeb && Platform.isAndroid)
+        ? AndroidSettings(
             accuracy: LocationAccuracy.high,
             distanceFilter: 10,
-          ),
-        ).listen((Position position) {
-          if (state.isActive) {
-            state = state.copyWith(
-              currentPosition: position,
-              lastLocationUpdate: DateTime.now(),
-            );
-            if (_socket != null && _socket!.connected) {
-              _socket!.emit('update_location', {
-                'lat': position.latitude,
-                'lng': position.longitude,
-                'sosEventId': state.sosEventId,
-              });
-            }
-            unawaited(
-              _dioClient.dio
-                  .post(
-                    ApiConstants.updateLocation,
-                    data: {
-                      'lat': position.latitude,
-                      'lng': position.longitude,
-                      if (state.sosEventId != null)
-                        'sosEventId': state.sosEventId,
-                      'accuracy': position.accuracy,
-                      'heading': position.heading,
-                      'speed': position.speed,
-                    },
-                  )
-                  .then(
-                    (_) {},
-                    onError: (Object error, StackTrace stack) {
-                      developer.log(
-                        'SOS location POST failed',
-                        name: 'SOSNotifier',
-                        error: error,
-                        stackTrace: stack,
-                      );
-                    },
-                  ),
-            );
+            intervalDuration: const Duration(seconds: 5),
+            foregroundNotificationConfig: ForegroundNotificationConfig(
+              notificationTitle: l10nSync('sosLiveLocationNotificationTitle'),
+              notificationText: l10nSync('sosLiveLocationNotificationText'),
+              enableWakeLock: true,
+              setOngoing: true,
+            ),
+          )
+        : const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 10,
+          );
+
+    _positionSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+      (Position position) {
+        if (state.isActive) {
+          state = state.copyWith(
+            currentPosition: position,
+            lastLocationUpdate: DateTime.now(),
+          );
+          if (_socket != null && _socket!.connected) {
+            _socket!.emit('update_location', {
+              'lat': position.latitude,
+              'lng': position.longitude,
+              'sosEventId': state.sosEventId,
+            });
           }
-        });
+          unawaited(
+            _dioClient.dio
+                .post(
+                  ApiConstants.updateLocation,
+                  data: {
+                    'lat': position.latitude,
+                    'lng': position.longitude,
+                    if (state.sosEventId != null) 'sosEventId': state.sosEventId,
+                    'accuracy': position.accuracy,
+                    'heading': position.heading,
+                    'speed': position.speed,
+                  },
+                )
+                .then(
+                  (_) {},
+                  onError: (Object error, StackTrace stack) {
+                    developer.log(
+                      'SOS location POST failed',
+                      name: 'SOSNotifier',
+                      error: error,
+                      stackTrace: stack,
+                    );
+                  },
+                ),
+          );
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        developer.log(
+          'SOS position stream failed',
+          name: 'SOSNotifier',
+          error: error,
+          stackTrace: stack,
+        );
+      },
+    );
   }
 
   Future<void> cancelSOS() async {

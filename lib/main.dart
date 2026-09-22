@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:suraksha_women_safety_app/config/api_config.dart';
 import 'package:suraksha_women_safety_app/core/network/backend_url_resolver.dart';
 import 'package:suraksha_women_safety_app/core/network/network_manager.dart';
+import 'package:suraksha_women_safety_app/core/network/tls_pinning.dart';
 import 'package:suraksha_women_safety_app/core/notifications/local_alert_service.dart';
 import 'package:suraksha_women_safety_app/core/notifications/notification_deep_link.dart';
 import 'package:suraksha_women_safety_app/core/notifications/notification_onboarding_sheet.dart';
@@ -41,6 +43,12 @@ Future<void> main() async {
   FlutterForegroundTask.initCommunicationPort();
   await BackendUrlResolver.clearOverride();
   ApiConfig.assertSafeConfiguration();
+  if (TlsPinning.isLeafNearingExpiry()) {
+    developer.log(
+      'TLS leaf pin expires ${TlsPinning.activeLeafExpiresAt.toIso8601String()} — rotate pins before release builds break.',
+      name: 'TlsPinning',
+    );
+  }
   NetworkManager.instance.dio.options.baseUrl = ApiConfig.preferredBaseUrl;
   // Do not block first frame on network/Firebase — warm up in background.
   unawaited(NetworkManager.instance.warmUpInBackground());

@@ -20,32 +20,19 @@ class EmergencyModeScreen extends ConsumerStatefulWidget {
 class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
   bool _contactPopupShown = false;
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_contactPopupShown) return;
-    _contactPopupShown = true;
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _showContactsInformedPopup(),
-    );
-  }
-
-  void _showContactsInformedPopup() {
-    final delivery = ref.read(sosProvider).smsDelivery;
-    if (delivery != SosDeliveryStatus.sent &&
-        delivery != SosDeliveryStatus.partial) {
-      return;
-    }
+  void _showContactsInformedPopup(SOSState sosState) {
     final contacts = ref.read(emergencyContactsProvider);
     if (contacts.isEmpty || !mounted) return;
+    final l10n = AppLocalizations.of(context);
+    final message = sosState.hasLiveTracking
+        ? l10n.t('liveLocationSharedWith')
+        : l10n.t('smsAlertsSentNoLiveTrack');
 
     showDialog(
       context: context,
       builder: (dialogContext) => PremiumDialogSurface(
-        title: AppLocalizations.of(
-          dialogContext,
-        ).t('emergencyContactsInformed'),
-        message: AppLocalizations.of(dialogContext).t('liveLocationSharedWith'),
+        title: l10n.t('emergencyContactsInformed'),
+        message: message,
         icon: Icons.groups_rounded,
         accentColor: const Color(0xFFE53935),
         actions: [
@@ -173,13 +160,26 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
     final l10n = AppLocalizations.of(context);
     final sosState = ref.watch(sosProvider);
 
+    ref.listen<SOSState>(sosProvider, (previous, next) {
+      if (_contactPopupShown) return;
+      final smsReady = next.smsDelivery == SosDeliveryStatus.sent ||
+          next.smsDelivery == SosDeliveryStatus.partial;
+      if (!smsReady) return;
+      _contactPopupShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showContactsInformedPopup(next);
+      });
+    });
+
     final locationText = sosState.currentPosition != null
         ? '${sosState.currentPosition!.latitude.toStringAsFixed(4)}, ${sosState.currentPosition!.longitude.toStringAsFixed(4)}'
         : l10n.t('emergencyFetchingLocation');
 
-    final statusText = sosState.isStreaming
-        ? (sosState.lastLocationUpdate != null
-              ? l10n
+    final statusText = !sosState.isStreaming
+        ? l10n.t('emergencyLiveTransmissionPaused')
+        : sosState.hasLiveTracking
+            ? (sosState.lastLocationUpdate != null
+                ? l10n
                     .t('emergencyLiveFeedActive')
                     .replaceAll(
                       '{time}',
@@ -187,8 +187,8 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                         sosState.lastLocationUpdate!,
                       ).format(context),
                     )
-              : l10n.t('emergencyLiveTransmissionStarting'))
-        : l10n.t('emergencyLiveTransmissionPaused');
+                : l10n.t('emergencyLiveTransmissionStarting'))
+            : l10n.t('emergencySmsOnlyNoLiveTrack');
 
     return Scaffold(
       backgroundColor: Colors.red.shade900,
@@ -247,6 +247,13 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                 statusText,
                 liveRegion: true,
               ),
+              if (sosState.isSmsOnlyWithoutLiveTrack) ...[
+                const SizedBox(height: 12),
+                AppAsyncStates.partialSuccessBanner(
+                  message: l10n.t('sosSmsOnlyBanner'),
+                  accent: const Color(0xFFF59E0B),
+                ),
+              ],
               if (ref.watch(emergencyContactsProvider).isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
@@ -260,7 +267,9 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        l10n.t('liveLocationSharingWith'),
+                        sosState.hasLiveTracking
+                            ? l10n.t('liveLocationSharingWith')
+                            : l10n.t('emergencyContactsAlertedLabel'),
                         style: const TextStyle(
                           color: Colors.white70,
                           fontWeight: FontWeight.w700,
@@ -313,28 +322,31 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                   button: true,
                   label: l10n.t('copyLiveTrackingLink'),
                   child: OutlinedButton.icon(
-                  onPressed: () async {
-                    await Clipboard.setData(
-                      ClipboardData(text: sosState.trackingUrl!),
-                    );
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(l10n.t('sosTrackingLinkCopied'))),
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(48, 48),
-                    side: const BorderSide(color: Colors.white54),
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: sosState.trackingUrl!),
+                      );
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.t('sosTrackingLinkCopied')),
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(48, 48),
+                      side: const BorderSide(color: Colors.white54),
+                    ),
+                    icon: const Icon(Icons.copy_rounded),
+                    label: Text(l10n.t('copyLiveTrackingLink')),
                   ),
-                  icon: const Icon(Icons.copy_rounded),
-                  label: Text(l10n.t('copyLiveTrackingLink')),
-                ),
                 ),
               ],
               if (sosState.serverDelivery == SosDeliveryStatus.failed ||
                   sosState.smsDelivery == SosDeliveryStatus.failed ||
-                  sosState.smsDelivery == SosDeliveryStatus.partial) ...[
+                  sosState.smsDelivery == SosDeliveryStatus.partial ||
+                  sosState.isSmsOnlyWithoutLiveTrack) ...[
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -343,17 +355,17 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                         button: true,
                         label: l10n.t('retry'),
                         child: OutlinedButton.icon(
-                        onPressed: () => ref
-                            .read(sosProvider.notifier)
-                            .retryFailedDelivery(),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(48, 48),
-                          side: const BorderSide(color: Colors.white54),
+                          onPressed: () => ref
+                              .read(sosProvider.notifier)
+                              .retryFailedDelivery(),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(48, 48),
+                            side: const BorderSide(color: Colors.white54),
+                          ),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: Text(l10n.t('retry')),
                         ),
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: Text(l10n.t('retry')),
-                      ),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -362,16 +374,16 @@ class _EmergencyModeScreenState extends ConsumerState<EmergencyModeScreen> {
                         button: true,
                         label: l10n.t('openSmsComposer'),
                         child: OutlinedButton.icon(
-                        onPressed: () =>
-                            ref.read(sosProvider.notifier).openSmsFallback(),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(48, 48),
-                          side: const BorderSide(color: Colors.white54),
+                          onPressed: () =>
+                              ref.read(sosProvider.notifier).openSmsFallback(),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(48, 48),
+                            side: const BorderSide(color: Colors.white54),
+                          ),
+                          icon: const Icon(Icons.sms_outlined),
+                          label: Text(l10n.t('openSmsComposer')),
                         ),
-                        icon: const Icon(Icons.sms_outlined),
-                        label: Text(l10n.t('openSmsComposer')),
-                      ),
                       ),
                     ),
                   ],

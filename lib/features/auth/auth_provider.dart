@@ -43,12 +43,20 @@ class OtpSendResult {
   /// (e.g. timeout after the server may already have emailed the code).
   final bool allowEnterOtp;
 
+  /// Delivery channel: email | sms | both
+  final String? channel;
+  final String? maskedEmail;
+  final String? phoneHint;
+
   const OtpSendResult({
     required this.success,
     this.error,
     this.resendAfterSeconds = 60,
     this.retryAfterSeconds,
     this.allowEnterOtp = false,
+    this.channel,
+    this.maskedEmail,
+    this.phoneHint,
   });
 }
 
@@ -508,16 +516,22 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<OtpSendResult> sendForgotPasswordOtp(String email) async {
+  Future<OtpSendResult> sendForgotPasswordOtp({
+    String? email,
+    String? phone,
+  }) async {
     // Forgot-password must not soft-fail like signup: timeouts must not pretend
     // an OTP was emailed.
+    final trimmedEmail = email?.trim().toLowerCase() ?? '';
+    final trimmedPhone = phone != null ? IndianPhoneUtils.forApi(phone) : '';
     try {
+      final data = <String, dynamic>{};
+      if (trimmedEmail.isNotEmpty) data['email'] = trimmedEmail;
+      if (trimmedPhone.length == 10) data['phone'] = trimmedPhone;
+
       final response = await _authPost(
-        ApiConstants.otpSend,
-        data: {
-          'email': email.trim().toLowerCase(),
-          'purpose': 'reset_password',
-        },
+        ApiConstants.forgotPassword,
+        data: data,
       );
       final body = response.data as Map<String, dynamic>;
       // Older backends omit `dispatched`; treat missing as true for compatibility.
@@ -527,8 +541,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return OtpSendResult(
         success: dispatched,
         allowEnterOtp: dispatched,
-        error: dispatched ? null : await _localized('otpEmailNotRegistered'),
+        error: dispatched
+            ? null
+            : await _localized(
+                trimmedPhone.length == 10 && trimmedEmail.isEmpty
+                    ? 'otpAccountNotFound'
+                    : 'otpEmailNotRegistered',
+              ),
         resendAfterSeconds: (body['resendAfterSeconds'] as num?)?.toInt() ?? 60,
+        channel: body['channel']?.toString(),
+        maskedEmail: body['maskedEmail']?.toString(),
+        phoneHint: body['phoneHint']?.toString(),
       );
     } on DioException catch (error) {
       final parsed = await _messageFromDio(
@@ -554,7 +577,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<bool> resetPassword({
-    required String email,
+    String? email,
+    String? phone,
     required String code,
     required String newPassword,
   }) async {
@@ -564,15 +588,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
       return false;
     }
 
+    final trimmedEmail = email?.trim().toLowerCase() ?? '';
+    final trimmedPhone = phone != null ? IndianPhoneUtils.forApi(phone) : '';
+
     state = state.copyWith(isLoading: true, error: null);
     try {
+      final data = <String, dynamic>{
+        'code': code.trim(),
+        'newPassword': newPassword,
+      };
+      if (trimmedEmail.isNotEmpty) data['email'] = trimmedEmail;
+      if (trimmedPhone.length == 10) data['phone'] = trimmedPhone;
+
       final response = await _authPost(
         ApiConstants.resetPassword,
-        data: {
-          'email': email.trim().toLowerCase(),
-          'code': code.trim(),
-          'newPassword': newPassword,
-        },
+        data: data,
       );
       await _applyAuthResponse(response.data as Map<String, dynamic>);
       TextInput.finishAutofillContext(shouldSave: true);

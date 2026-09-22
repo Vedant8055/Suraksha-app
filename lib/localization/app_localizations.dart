@@ -67,7 +67,7 @@ class AppLocalizations {
       'forgotPassword': 'Forgot password?',
       'forgotPasswordTitle': 'Reset password',
       'forgotPasswordSubtitle':
-          'Enter your registered email to receive a 6-digit OTP. Accounts without an email cannot reset here — add an email while signed in, or contact support.',
+          'Enter your registered email or phone number. We’ll send a 6-digit OTP by SMS and/or email so you can set a new password.',
       'sendOtp': 'SEND OTP',
       'resendOtp': 'RESEND OTP',
       'resendOtpIn': 'Resend OTP in {seconds}s',
@@ -78,15 +78,29 @@ class AppLocalizations {
       'otpSent': 'OTP sent to your email. Enter it below.',
       'otpSentToEmail':
           'OTP sent to {email}. Check Inbox and Spam/Junk. Subject starts with “Suraksha OTP”.',
+      'otpSentToPhone':
+          'OTP sent by SMS to {phone}. Enter the code below.',
+      'otpSentToPhoneAndEmail':
+          'OTP sent to SMS {phone} and email {email}. Check messages and Spam/Junk.',
+      'otpSentCheckSmsOrEmail':
+          'OTP sent. Check SMS and your registered email (including Spam/Junk).',
       'otpEnterHintSpam':
           'Enter the 6-digit code from your email. Also check Spam/Junk. Use the same email you used at signup.',
+      'otpEnterHintRecovery':
+          'Enter the 6-digit code from SMS or the email linked to this phone. Also check Spam/Junk.',
+      'recoveryPhoneHint': 'SMS hint: {phone}',
+      'recoveryEmailHint': 'Email on account: {email}',
+      'emailOrPhoneInvalid':
+          'Enter a valid email address or 10-digit Indian mobile number.',
+      'otpAccountNotFound':
+          'No Suraksha account uses this phone. Check the number, or try the email from signup.',
       'otpEmailNotRegistered':
-          'No Suraksha account uses this email. Use the exact email from signup, or sign in with phone and add/update email in Profile.',
+          'No Suraksha account uses this email. Use the exact email from signup, or recover with your phone number.',
       'otpEmailAlreadyRegistered':
           'This email is already registered. Sign in, or use Forgot Password to reset.',
       'otpEmailUnavailable':
           'This email cannot receive an OTP right now. Try a different address.',
-      'otpSendingWait': 'Sending OTP… server may take up to a minute to wake',
+      'otpSendingWait': 'Sending OTP… please wait',
       'otpSendFailed': 'Could not send OTP. Check your details and try again.',
       'otpSendCheckInbox':
           'If an email arrived with a code, enter it below. If not, wait a moment and tap Resend.',
@@ -1820,7 +1834,7 @@ class AppLocalizations {
       'forgotPassword': 'पासवर्ड भूल गए?',
       'forgotPasswordTitle': 'पासवर्ड रीसेट करें',
       'forgotPasswordSubtitle':
-          'अपना पंजीकृत ईमेल दर्ज करें। हम 6 अंकों का OTP भेजेंगे। जिन खातों में ईमेल नहीं है वे यहां रीसेट नहीं कर सकते।',
+          'अपना पंजीकृत ईमेल या फोन नंबर दर्ज करें। हम SMS और/या ईमेल पर 6 अंकों का OTP भेजेंगे।',
       'sendOtp': 'OTP भेजें',
       'resendOtp': 'OTP दोबारा भेजें',
       'resendOtpIn': '{seconds}s में OTP दोबारा भेजें',
@@ -1831,15 +1845,28 @@ class AppLocalizations {
       'otpSent': 'OTP आपके ईमेल पर भेजा गया। नीचे दर्ज करें।',
       'otpSentToEmail':
           '{email} पर OTP भेजा गया। Inbox और Spam/Junk जाँचें। Subject “Suraksha OTP” से शुरू होता है।',
+      'otpSentToPhone': 'SMS से {phone} पर OTP भेजा गया। नीचे कोड लिखें।',
+      'otpSentToPhoneAndEmail':
+          'SMS {phone} और ईमेल {email} पर OTP भेजा गया। मैसेज और Spam/Junk जाँचें।',
+      'otpSentCheckSmsOrEmail':
+          'OTP भेजा गया। SMS और पंजीकृत ईमेल (Spam/Junk सहित) जाँचें।',
       'otpEnterHintSpam':
           'ईमेल का 6 अंकों का कोड लिखें। Spam/Junk भी देखें। वही ईमेल उपयोग करें जिससे साइन अप किया था।',
+      'otpEnterHintRecovery':
+          'SMS या इस फोन से जुड़े ईमेल का 6 अंकों का कोड लिखें। Spam/Junk भी देखें।',
+      'recoveryPhoneHint': 'SMS संकेत: {phone}',
+      'recoveryEmailHint': 'खाते का ईमेल: {email}',
+      'emailOrPhoneInvalid':
+          'मान्य ईमेल पता या 10 अंकों का भारतीय मोबाइल नंबर दर्ज करें।',
+      'otpAccountNotFound':
+          'इस फोन से कोई Suraksha खाता नहीं मिला। नंबर जाँचें, या साइन अप वाला ईमेल आज़माएँ।',
       'otpEmailNotRegistered':
-          'इस ईमेल से कोई Suraksha खाता नहीं मिला। साइन अप वाला सही ईमेल लिखें, या फोन से साइन इन कर Profile में ईमेल जोड़ें/अपडेट करें।',
+          'इस ईमेल से कोई Suraksha खाता नहीं मिला। साइन अप वाला सही ईमेल लिखें, या फोन नंबर से रिकवरी करें।',
       'otpEmailAlreadyRegistered':
           'यह ईमेल पहले से पंजीकृत है। साइन इन करें, या पासवर्ड रीसेट के लिए Forgot Password उपयोग करें।',
       'otpEmailUnavailable':
           'इस ईमेल पर अभी OTP नहीं भेजा जा सकता। कोई अन्य पता आज़माएँ।',
-      'otpSendingWait': 'OTP भेजा जा रहा है… सर्वर को जागने में एक मिनट लग सकता है',
+      'otpSendingWait': 'OTP भेजा जा रहा है… प्रतीक्षा करें',
       'otpSendFailed': 'OTP नहीं भेजा जा सका। विवरण जाँचकर फिर कोशिश करें।',
       'otpSendCheckInbox':
           'अगर ईमेल में कोड आया है तो नीचे लिखें। नहीं आया हो तो थोड़ा रुककर Resend दबाएँ।',
@@ -3390,7 +3417,7 @@ class AppLocalizations {
       'forgotPassword': 'पासवर्ड विसरलात?',
       'forgotPasswordTitle': 'पासवर्ड रीसेट करा',
       'forgotPasswordSubtitle':
-          'तुमचा नोंदणीकृत ईमेल टाका. आम्ही 6 अंकी OTP पाठवू.',
+          'तुमचा नोंदणीकृत ईमेल किंवा फोन नंबर टाका. आम्ही SMS आणि/किंवा ईमेलवर 6 अंकी OTP पाठवू.',
       'sendOtp': 'OTP पाठवा',
       'resendOtp': 'OTP पुन्हा पाठवा',
       'resendOtpIn': '{seconds}s मध्ये OTP पुन्हा पाठवा',
@@ -3401,15 +3428,28 @@ class AppLocalizations {
       'otpSent': 'OTP तुमच्या ईमेलवर पाठवला. खाली लिहा.',
       'otpSentToEmail':
           '{email} वर OTP पाठवला. Inbox आणि Spam/Junk तपासा. Subject “Suraksha OTP” ने सुरू होते.',
+      'otpSentToPhone': 'SMS ने {phone} वर OTP पाठवला. खाली कोड लिहा.',
+      'otpSentToPhoneAndEmail':
+          'SMS {phone} आणि ईमेल {email} वर OTP पाठवला. मेसेज आणि Spam/Junk तपासा.',
+      'otpSentCheckSmsOrEmail':
+          'OTP पाठवला. SMS आणि नोंदणीकृत ईमेल (Spam/Junk सहित) तपासा.',
       'otpEnterHintSpam':
           'ईमेलमधील 6 अंकी कोड लिहा. Spam/Junk देखील तपासा. साइन अप करताना वापरलेलाच ईमेल वापरा.',
+      'otpEnterHintRecovery':
+          'SMS किंवा या फोनशी जोडलेल्या ईमेलमधील 6 अंकी कोड लिहा. Spam/Junk देखील तपासा.',
+      'recoveryPhoneHint': 'SMS संकेत: {phone}',
+      'recoveryEmailHint': 'खात्याचा ईमेल: {email}',
+      'emailOrPhoneInvalid':
+          'वैध ईमेल पत्ता किंवा 10 अंकी भारतीय मोबाइल नंबर टाका.',
+      'otpAccountNotFound':
+          'या फोनने कोणतेही Suraksha खाते सापडले नाही. नंबर तपासा, किंवा साइन अपमधील ईमेल वापरा.',
       'otpEmailNotRegistered':
-          'या ईमेलने कोणतेही Suraksha खाते सापडले नाही. साइन अपमधील अचूक ईमेल वापरा, किंवा फोनने साइन इन करून Profile मध्ये ईमेल जोडा/अपडेट करा.',
+          'या ईमेलने कोणतेही Suraksha खाते सापडले नाही. साइन अपमधील अचूक ईमेल वापरा, किंवा फोन नंबरने रिकव्हरी करा.',
       'otpEmailAlreadyRegistered':
           'हा ईमेल आधीच नोंदणीकृत आहे. साइन इन करा, किंवा पासवर्ड रीसेटसाठी Forgot Password वापरा.',
       'otpEmailUnavailable':
           'या ईमेलवर सध्या OTP पाठवता येत नाही. दुसरा पत्ता वापरून पहा.',
-      'otpSendingWait': 'OTP पाठवत आहोत… सर्व्हर जागे होण्यासाठी एक मिनिट लागू शकतो',
+      'otpSendingWait': 'OTP पाठवत आहोत… कृपया थांबा',
       'otpSendFailed': 'OTP पाठवता आला नाही. तपशील तपासून पुन्हा प्रयत्न करा.',
       'otpSendCheckInbox':
           'ईमेलमध्ये कोड आला असेल तर खाली लिहा. नसेल तर थोडे थांबून Resend दाबा.',

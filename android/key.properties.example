@@ -1,4 +1,6 @@
-storePassword=replace-with-keystore-password
-keyPassword=replace-with-key-password
+# Copy to key.properties (gitignored) and point storeFile at a real .jks/.keystore.
+storePassword=your-store-password
+keyPassword=your-key-password
 keyAlias=suraksha
-storeFile=../keystore/suraksha-upload-key.jks
+# Path is relative to android/app/
+storeFile=../../keystore/suraksha-upload-key.jks

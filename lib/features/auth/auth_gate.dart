@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/features/auth/auth_provider.dart';
 import 'package:suraksha_women_safety_app/features/auth/login_screen.dart';
 import 'package:suraksha_women_safety_app/features/dashboard/dashboard_screen.dart';
@@ -12,6 +13,11 @@ class AuthGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authProvider);
+
+    // Client demo: always open the main app (no login/signup).
+    if (FeatureFlags.clientDemoSkipAuth) {
+      return const DashboardScreen();
+    }
 
     if (auth.isInitializing) {
       return const Scaffold(

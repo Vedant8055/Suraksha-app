@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:suraksha_women_safety_app/config/feature_flags.dart';
 import 'package:suraksha_women_safety_app/constants/api_constants.dart';
 import 'package:suraksha_women_safety_app/core/activity_log/app_activity_log.dart';
 import 'package:suraksha_women_safety_app/core/network/auth_interceptor.dart';
@@ -162,6 +163,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> restoreSession() async {
+    if (FeatureFlags.clientDemoSkipAuth) {
+      _enterClientDemoSession();
+      return;
+    }
     try {
       final token = await _storage.read(key: AuthTokenStorage.tokenKey);
       if (token == null || token.isEmpty) {
@@ -251,6 +256,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Clears local auth state after interceptor/session invalidation.
   Future<void> forceLocalSignOut() async {
+    if (FeatureFlags.clientDemoSkipAuth) {
+      _enterClientDemoSession();
+      return;
+    }
     final userId = state.user?.id;
     await ProfileSessionCache.clearAll(userId: userId);
     if (userId != null && userId.isNotEmpty) {
@@ -260,6 +269,21 @@ class AuthNotifier extends StateNotifier<AuthState> {
     await CyberVaultLock().disable();
     await _clearStoredCredentials();
     state = AuthState(isInitializing: false);
+  }
+
+  void _enterClientDemoSession() {
+    state = AuthState(
+      isInitializing: false,
+      isLoading: false,
+      token: 'demo-client-token',
+      user: UserModel(
+        id: 'demo-client',
+        name: 'Demo User',
+        email: 'demo@suraksha.app',
+        phone: '9999999999',
+      ),
+      error: null,
+    );
   }
 
   Future<UserModel> _fetchProfile() async {
@@ -753,6 +777,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     unawaited(AppActivityLog.instance.record('logout'));
+    if (FeatureFlags.clientDemoSkipAuth) {
+      _enterClientDemoSession();
+      return;
+    }
     final userId = state.user?.id;
     final refreshToken = await _storage.read(
       key: AuthTokenStorage.refreshTokenKey,

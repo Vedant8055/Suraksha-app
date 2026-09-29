@@ -23,15 +23,25 @@ if (googleMapsApiKey.isEmpty()) {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
+var releaseKeystoreFile: java.io.File? = null
 if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use(keystoreProperties::load)
-}
-val releaseRequested = gradle.startParameter.taskNames.any {
-    it.contains("release", ignoreCase = true)
-}
-if (releaseRequested && !keystorePropertiesFile.exists()) {
-    throw GradleException(
-        "Release signing is not configured. Create android/key.properties or provide it in CI.",
+    val storeFileProp = keystoreProperties["storeFile"]?.toString()?.trim().orEmpty()
+    if (storeFileProp.isNotEmpty()) {
+        val candidate = file(storeFileProp)
+        if (candidate.isFile) {
+            releaseKeystoreFile = candidate
+        } else {
+            logger.warn(
+                "Release keystore missing at ${candidate.absolutePath}. " +
+                    "Release builds will fall back to debug signing so the APK still builds.",
+            )
+        }
+    }
+} else {
+    logger.warn(
+        "android/key.properties not found. Release builds will use debug signing. " +
+            "See android/key.properties.example when you need a store-signed release.",
     )
 }
 
@@ -67,11 +77,11 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (releaseKeystoreFile != null) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
+                storeFile = releaseKeystoreFile
                 storePassword = keystoreProperties["storePassword"] as String
             }
         }
@@ -79,13 +89,22 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.findByName("release")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
+            // Prefer upload keystore when present; otherwise debug-sign so local/client demos still build.
+            val releaseSigning = signingConfigs.findByName("release")
+            signingConfig = releaseSigning ?: signingConfigs.getByName("debug")
+            // Skip R8 when falling back to debug signing — avoids long/failing minify on demo builds.
+            val storeSigned = releaseSigning != null
+            isMinifyEnabled = storeSigned
+            isShrinkResources = storeSigned
+            if (storeSigned) {
+                proguardFiles(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro",
+                )
+            }
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }

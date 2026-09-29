@@ -36,4 +36,12 @@ class FeatureFlags {
     'FLAG_CYBER_EVIDENCE_UPLOAD',
     defaultValue: true,
   );
+
+  /// Client demo: skip login/signup and open the dashboard immediately.
+  /// Turn auth back on with:
+  /// `flutter run --dart-define=FLAG_CLIENT_DEMO_SKIP_AUTH=false`
+  static const bool clientDemoSkipAuth = bool.fromEnvironment(
+    'FLAG_CLIENT_DEMO_SKIP_AUTH',
+    defaultValue: true,
+  );
 }

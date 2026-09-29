@@ -532,6 +532,20 @@
       ]
     },
     {
+      "name": "pointycastle",
+      "version": "3.9.1",
+      "dependencies": [
+        "collection",
+        "convert",
+        "js"
+      ]
+    },
+    {
+      "name": "asn1lib",
+      "version": "1.6.5",
+      "dependencies": []
+    },
+    {
       "name": "args",
       "version": "2.7.0",
       "dependencies": []
@@ -1453,6 +1467,18 @@
       ]
     },
     {
+      "name": "js",
+      "version": "0.7.2",
+      "dependencies": []
+    },
+    {
+      "name": "convert",
+      "version": "3.1.2",
+      "dependencies": [
+        "typed_data"
+      ]
+    },
+    {
       "name": "xml",
       "version": "6.6.1",
       "dependencies": [
@@ -1723,32 +1749,6 @@
       "dependencies": [
         "source_span"
       ]
-    },
-    {
-      "name": "pointycastle",
-      "version": "3.9.1",
-      "dependencies": [
-        "collection",
-        "convert",
-        "js"
-      ]
-    },
-    {
-      "name": "convert",
-      "version": "3.1.2",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
-      "name": "js",
-      "version": "0.7.2",
-      "dependencies": []
-    },
-    {
-      "name": "asn1lib",
-      "version": "1.6.5",
-      "dependencies": []
     }
   ],
   "configVersion": 1

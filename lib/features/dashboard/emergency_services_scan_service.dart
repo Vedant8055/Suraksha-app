@@ -1,9 +1,8 @@
 import 'package:dio/dio.dart';
-import 'package:suraksha_women_safety_app/constants/api_constants.dart';
-import 'package:suraksha_women_safety_app/core/network/dio_client.dart';
+import 'package:suraksha_women_safety_app/features/dashboard/nearby_places_api.dart';
 
 /// Nearby emergency / support services within a fixed radius (default 1 km).
-/// Counts are resolved on the backend using the server Google Maps API key.
+/// Counts prefer the Suraksha backend, then fall back to OpenStreetMap.
 class NearbyEmergencyServicesSnapshot {
   const NearbyEmergencyServicesSnapshot({
     this.policeCount = 0,
@@ -63,12 +62,27 @@ class NearbyEmergencyServicesSnapshot {
       scanned: json['scanned'] != false,
     );
   }
+
+  factory NearbyEmergencyServicesSnapshot.fromCounts(
+    Map<String, int> counts, {
+    int radiusMeters = 1000,
+  }) {
+    return NearbyEmergencyServicesSnapshot(
+      policeCount: counts['police'] ?? 0,
+      hospitalCount: counts['hospitals'] ?? 0,
+      pharmacyCount: counts['pharmacies'] ?? 0,
+      petrolPumpCount: counts['petrolPumps'] ?? 0,
+      washroomCount: counts['washrooms'] ?? 0,
+      bloodBankCount: counts['bloodBanks'] ?? 0,
+      radiusMeters: radiusMeters,
+      scanned: true,
+    );
+  }
 }
 
 class EmergencyServicesScanService {
-  EmergencyServicesScanService({Dio? dio}) : _dio = dio ?? DioClient().dio;
+  EmergencyServicesScanService();
 
-  final Dio _dio;
   static const int defaultRadiusMeters = 1000;
 
   Future<NearbyEmergencyServicesSnapshot> scanWithinRadius({
@@ -78,34 +92,18 @@ class EmergencyServicesScanService {
     String languageCode = 'en',
   }) async {
     try {
-      final response = await _dio.get(
-        ApiConstants.nearbyEmergencyServices,
-        queryParameters: {
-          'lat': latitude,
-          'lng': longitude,
-          'radius': radiusMeters,
-          'lang': languageCode,
-        },
-        options: Options(
-          sendTimeout: const Duration(seconds: 12),
-          receiveTimeout: const Duration(seconds: 12),
-          // Public nearby routes — do not attach / refresh JWT.
-          extra: const {'skipAuth': true, 'skipAuthRefresh': true},
-        ),
-      );
-      final data = response.data;
-      if (data is Map) {
-        return NearbyEmergencyServicesSnapshot.fromJson(
-          Map<String, dynamic>.from(data),
-        );
-      }
-      return NearbyEmergencyServicesSnapshot(
+      final counts = await NearbyPlacesApi.fetchEmergencyCounts(
+        latitude: latitude,
+        longitude: longitude,
         radiusMeters: radiusMeters,
-        scanned: true,
+        languageCode: languageCode,
+      );
+      return NearbyEmergencyServicesSnapshot.fromCounts(
+        counts,
+        radiusMeters: radiusMeters,
       );
     } on DioException catch (error) {
       if (error.response?.statusCode == 503) {
-        // Server key missing — still mark scanned so UI shows the section.
         return NearbyEmergencyServicesSnapshot(
           radiusMeters: radiusMeters,
           scanned: true,

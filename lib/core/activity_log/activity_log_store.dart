@@ -44,6 +44,12 @@ class ActivityLogStore {
     return dir;
   }
 
+  String? _cachedDayKey;
+  String _cachedPrevHash = 'genesis';
+  int _cachedDayCount = 0;
+  DateTime? _lastPurgeAt;
+  int _appendsSincePurge = 0;
+
   Future<enc.Key> _key() async {
     if (_cachedKey != null) return _cachedKey!;
     var stored = await _secure.read(key: _keyName);
@@ -86,15 +92,32 @@ class ActivityLogStore {
     required String details,
   }) {
     return _serialized(() async {
-      await purgeExpired();
+      _appendsSincePurge += 1;
+      final shouldPurge = _lastPurgeAt == null ||
+          DateTime.now().difference(_lastPurgeAt!) > const Duration(hours: 1) ||
+          _appendsSincePurge >= 40;
+      if (shouldPurge) {
+        await purgeExpired();
+        _lastPurgeAt = DateTime.now();
+        _appendsSincePurge = 0;
+      }
+
       final now = DateTime.now().toUtc();
+      final dayKey = _dayName(now);
       final dir = await _dir();
       final file = _fileFor(dir, now);
       final key = await _key();
-      final existing = await _readFile(file, key);
-      if (existing.length >= maxEventsPerDay) return;
 
-      final prevHash = existing.isEmpty ? 'genesis' : existing.last.hash;
+      // Cache last hash / count so we do not decrypt the whole day file on every write.
+      if (_cachedDayKey != dayKey) {
+        final existing = await _readFile(file, key);
+        _cachedDayKey = dayKey;
+        _cachedDayCount = existing.length;
+        _cachedPrevHash = existing.isEmpty ? 'genesis' : existing.last.hash;
+      }
+      if (_cachedDayCount >= maxEventsPerDay) return;
+
+      final prevHash = _cachedPrevHash;
       final timestamp = now;
       final payload =
           '${timestamp.toIso8601String()}|$event|$details|$prevHash';
@@ -106,7 +129,9 @@ class ActivityLogStore {
         hash: ActivityLogEntry.computeHash(payload),
       );
       final line = _encryptLine(jsonEncode(entry.toJson()), key);
-      await file.writeAsString('$line\n', mode: FileMode.append, flush: true);
+      await file.writeAsString('$line\n', mode: FileMode.append, flush: false);
+      _cachedPrevHash = entry.hash;
+      _cachedDayCount += 1;
     });
   }
 

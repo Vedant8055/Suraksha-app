@@ -110,8 +110,17 @@ class DashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final screenWidth = MediaQuery.of(context).size.width;
     final cardWidth = (screenWidth - 68) / 2;
-    final safetyState = ref.watch(safetyMonitorProvider);
-    ref.watch(appLocaleProvider);
+    // Only gate on GPS permission bits — avoid rebuilding the whole dashboard
+    // on every safety score / position tick.
+    final gpsEnabled = ref.watch(
+      safetyMonitorProvider.select((s) => s.gpsEnabled),
+    );
+    final permissionGranted = ref.watch(
+      safetyMonitorProvider.select((s) => s.permissionGranted),
+    );
+    final statusMessage = ref.watch(
+      safetyMonitorProvider.select((s) => s.statusMessage),
+    );
     ref.listen(appLocaleProvider, (previous, next) {
       if (previous?.languageCode == next.languageCode) return;
       final nearbyState = ref.read(nearbyPlacesProvider);
@@ -123,9 +132,9 @@ class DashboardScreen extends ConsumerWidget {
       }
     });
 
-    if (!safetyState.gpsEnabled || !safetyState.permissionGranted) {
+    if (!gpsEnabled || !permissionGranted) {
       return DashboardLocationRequiredView(
-        statusMessage: safetyState.statusMessage,
+        statusMessage: statusMessage,
         onRetry: () {
           unawaited(
             ref.read(safetyMonitorProvider.notifier).retry().catchError((_) {}),
@@ -149,7 +158,7 @@ class DashboardScreen extends ConsumerWidget {
                   const SizedBox(height: 24),
                   _buildQuickActions(context, cardWidth),
                   const SizedBox(height: 24),
-                  _buildSOSButton(context, ref),
+                  const _DashboardSosButton(),
                   const SizedBox(height: 14),
                   const PoliceEmergencyDialCard(),
                   const SizedBox(height: 14),
@@ -329,160 +338,20 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Future<bool> _confirmSosActivation(BuildContext context) async {
-    final l10n = AppLocalizations.of(context);
-    final confirmKey = FeatureFlags.sosAutoSms && FeatureFlags.publicLiveSharing
-        ? 'sosConfirmMessage'
-        : FeatureFlags.sosAutoSms
-            ? 'sosConfirmMessageSmsOnly'
-            : FeatureFlags.publicLiveSharing
-                ? 'sosConfirmMessageLiveOnly'
-                : 'sosConfirmMessageMinimal';
-    return await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) => AlertDialog(
-            icon: const Icon(
-              Icons.sos_rounded,
-              color: AppTheme.accentColor,
-              size: 42,
-            ),
-            title: Text(l10n.t('sosConfirmTitle')),
-            content: Text(l10n.t(confirmKey)),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: Text(l10n.t('cancel')),
-              ),
-              FilledButton.icon(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                icon: const Icon(Icons.warning_amber_rounded),
-                label: Text(l10n.t('activateSos')),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-  }
-
-  Widget _buildSOSButton(BuildContext context, WidgetRef ref) {
-    final l10n = AppLocalizations.of(context);
-    final sosState = ref.watch(sosProvider);
-    final isLaunching = ref.watch(_manualSosLaunchingProvider);
-    final semanticLabel = sosState.isActive || isLaunching
-        ? l10n.t('a11yOpenEmergencyMode')
-        : l10n.t('activateSos');
-
-    final button = Container(
-      width: 172,
-      height: 172,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [
-            const Color(0xFFFF5A4A),
-            const Color(0xFFE53935),
-            const Color(0xFFB71C1C),
-          ],
-          stops: const [0.0, 0.6, 1.0],
-        ),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.18),
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.accentColor.withValues(
-              alpha: sosState.isActive || isLaunching ? 0.48 : 0.24,
-            ),
-            blurRadius: sosState.isActive || isLaunching ? 36 : 16,
-            spreadRadius: sosState.isActive || isLaunching ? 10 : 3,
-          ),
-        ],
-      ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.power_settings_new, size: 58, color: Colors.white),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: ExcludeSemantics(
-                child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  l10n.t('dashboardSosLabel'),
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    final animated = Accessibility.motionAware(
-      context: context,
-      child: button,
-      animate: (child) => Pulse(
-        infinite: true,
-        duration: const Duration(milliseconds: 800),
-        child: child,
-      ),
-    );
-
-    return Center(
-      child: Semantics(
-        button: true,
-        enabled: !isLaunching || sosState.isActive,
-        label: semanticLabel,
-        hint: sosState.isActive
-            ? null
-            : 'Double tap to confirm and activate emergency SOS',
-        child: GestureDetector(
-          onTap: () async {
-            if (isLaunching) return;
-            if (sosState.isActive) {
-              _pushPremium(context, const EmergencyModeScreen());
-              return;
-            }
-            final canTriggerSos = await ensureEmergencyContactsSaved(
-              context,
-              ref,
-            );
-            if (!canTriggerSos) return;
-            if (!context.mounted ||
-                !await _confirmSosActivation(context) ||
-                !context.mounted) {
-              return;
-            }
-            ref.read(_manualSosLaunchingProvider.notifier).state = true;
-            unawaited(ref.read(sosProvider.notifier).triggerSOS());
-            // Keep the launch animation to exactly 3 pulse cycles before opening SOS mode.
-            await Future<void>.delayed(const Duration(milliseconds: 2400));
-            ref.read(_manualSosLaunchingProvider.notifier).state = false;
-            if (!context.mounted) {
-              return;
-            }
-            _pushPremium(context, const EmergencyModeScreen());
-          },
-          child: sosState.isActive || isLaunching ? animated : button,
-        ),
-      ),
-    );
-  }
-
   Widget _buildActiveMonitorBanner(BuildContext context, WidgetRef ref) {
-    final scream = ref.watch(screamDetectionProvider);
-    final impact = ref.watch(impactDetectionProvider);
-    if (!scream.monitoring && !impact.monitoring) {
+    final screamMonitoring = ref.watch(
+      screamDetectionProvider.select((s) => s.monitoring),
+    );
+    final screamEnabled = ref.watch(
+      screamDetectionProvider.select((s) => s.enabled),
+    );
+    final impactMonitoring = ref.watch(
+      impactDetectionProvider.select((s) => s.monitoring),
+    );
+    final impactEnabled = ref.watch(
+      impactDetectionProvider.select((s) => s.enabled),
+    );
+    if (!screamMonitoring && !impactMonitoring) {
       return const SizedBox.shrink();
     }
     final l10n = AppLocalizations.of(context);
@@ -523,9 +392,9 @@ class DashboardScreen extends ConsumerWidget {
                   ),
                   Text(
                     [
-                      if (scream.monitoring) l10n.t('microphoneMonitor'),
-                      if (impact.monitoring) l10n.t('impactMonitor'),
-                    ].join(' â€¢ '),
+                      if (screamMonitoring) l10n.t('microphoneMonitor'),
+                      if (impactMonitoring) l10n.t('impactMonitor'),
+                    ].join(' • '),
                     style: TextStyle(
                       color: isLight
                           ? const Color(0xFF5F6F8A)
@@ -538,12 +407,12 @@ class DashboardScreen extends ConsumerWidget {
             ),
             TextButton(
               onPressed: () async {
-                if (scream.enabled) {
+                if (screamEnabled) {
                   await ref
                       .read(screamDetectionProvider.notifier)
                       .setEnabled(false);
                 }
-                if (impact.enabled) {
+                if (impactEnabled) {
                   await ref
                       .read(impactDetectionProvider.notifier)
                       .setEnabled(false);
@@ -1106,3 +975,160 @@ class DashboardScreen extends ConsumerWidget {
   }
 
 }
+
+class _DashboardSosButton extends ConsumerWidget {
+  const _DashboardSosButton();
+
+  Future<bool> _confirmSosActivation(BuildContext context) async {
+    final l10n = AppLocalizations.of(context);
+    final confirmKey = FeatureFlags.sosAutoSms && FeatureFlags.publicLiveSharing
+        ? 'sosConfirmMessage'
+        : FeatureFlags.sosAutoSms
+            ? 'sosConfirmMessageSmsOnly'
+            : FeatureFlags.publicLiveSharing
+                ? 'sosConfirmMessageLiveOnly'
+                : 'sosConfirmMessageMinimal';
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            icon: const Icon(
+              Icons.sos_rounded,
+              color: AppTheme.accentColor,
+              size: 42,
+            ),
+            title: Text(l10n.t('sosConfirmTitle')),
+            content: Text(l10n.t(confirmKey)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(l10n.t('cancel')),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                icon: const Icon(Icons.warning_amber_rounded),
+                label: Text(l10n.t('activateSos')),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _pushPremium(BuildContext context, Widget screen) {
+    return AppNavigator.pushPremium(context, screen);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context);
+    final isActive = ref.watch(sosProvider.select((s) => s.isActive));
+    final isLaunching = ref.watch(_manualSosLaunchingProvider);
+    final semanticLabel = isActive || isLaunching
+        ? l10n.t('a11yOpenEmergencyMode')
+        : l10n.t('activateSos');
+
+    final button = Container(
+      width: 172,
+      height: 172,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const RadialGradient(
+          colors: [
+            Color(0xFFFF5A4A),
+            Color(0xFFE53935),
+            Color(0xFFB71C1C),
+          ],
+          stops: [0.0, 0.6, 1.0],
+        ),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.18),
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.accentColor.withValues(
+              alpha: isActive || isLaunching ? 0.48 : 0.24,
+            ),
+            blurRadius: isActive || isLaunching ? 36 : 16,
+            spreadRadius: isActive || isLaunching ? 10 : 3,
+          ),
+        ],
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.power_settings_new, size: 58, color: Colors.white),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: ExcludeSemantics(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    l10n.t('dashboardSosLabel'),
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final animated = Accessibility.motionAware(
+      context: context,
+      child: button,
+      animate: (child) => Pulse(
+        infinite: true,
+        duration: const Duration(milliseconds: 900),
+        child: child,
+      ),
+    );
+
+    return Center(
+      child: Semantics(
+        button: true,
+        enabled: !isLaunching || isActive,
+        label: semanticLabel,
+        hint: isActive
+            ? null
+            : 'Double tap to confirm and activate emergency SOS',
+        child: GestureDetector(
+          onTap: () async {
+            if (isLaunching) return;
+            if (isActive) {
+              _pushPremium(context, const EmergencyModeScreen());
+              return;
+            }
+            final canTriggerSos = await ensureEmergencyContactsSaved(
+              context,
+              ref,
+            );
+            if (!canTriggerSos) return;
+            if (!context.mounted ||
+                !await _confirmSosActivation(context) ||
+                !context.mounted) {
+              return;
+            }
+            ref.read(_manualSosLaunchingProvider.notifier).state = true;
+            unawaited(ref.read(sosProvider.notifier).triggerSOS());
+            await Future<void>.delayed(const Duration(milliseconds: 2400));
+            ref.read(_manualSosLaunchingProvider.notifier).state = false;
+            if (!context.mounted) return;
+            _pushPremium(context, const EmergencyModeScreen());
+          },
+          child: isActive || isLaunching ? animated : button,
+        ),
+      ),
+    );
+  }
+}
+

@@ -10,6 +10,8 @@ class AppActivityLog {
   static final AppActivityLog instance = AppActivityLog._();
 
   final ActivityLogStore store = ActivityLogStore();
+  Position? _cachedPosition;
+  DateTime? _cachedPositionAt;
 
   /// [event] is a stable id. [message] is the human-readable line shown in UI/export.
   /// Last-known GPS is attached when available (no new location request).
@@ -28,10 +30,16 @@ class AppActivityLog {
         () => ActivityLogLabels.lineForEvent(event, merged),
       );
 
-      final position = await _lastKnownPosition();
-      if (position != null) {
-        merged.putIfAbsent('lat', () => position.latitude.toStringAsFixed(6));
-        merged.putIfAbsent('lng', () => position.longitude.toStringAsFixed(6));
+      // Skip GPS for high-frequency nav/UI events — major lag source.
+      final skipGps = event.startsWith('screen_') ||
+          event == 'app_started' ||
+          event.contains('navigate');
+      if (!skipGps) {
+        final position = await _lastKnownPosition();
+        if (position != null) {
+          merged.putIfAbsent('lat', () => position.latitude.toStringAsFixed(6));
+          merged.putIfAbsent('lng', () => position.longitude.toStringAsFixed(6));
+        }
       }
 
       final scrubbed = ActivityLogRedactor.scrubMap(merged);
@@ -48,10 +56,19 @@ class AppActivityLog {
   }
 
   Future<Position?> _lastKnownPosition() async {
+    final cachedAt = _cachedPositionAt;
+    if (_cachedPosition != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < const Duration(seconds: 45)) {
+      return _cachedPosition;
+    }
     try {
-      return await Geolocator.getLastKnownPosition();
+      final pos = await Geolocator.getLastKnownPosition();
+      _cachedPosition = pos;
+      _cachedPositionAt = DateTime.now();
+      return pos;
     } catch (_) {
-      return null;
+      return _cachedPosition;
     }
   }
 }

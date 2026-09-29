@@ -90,6 +90,7 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   double? _smoothedTravelSpeedMps;
   int? _stableEtaSeconds;
   DateTime? _lastEtaUpdateAt;
+  DateTime? _lastJourneyUiAt;
   int _routeRequestId = 0;
   List<SafetyHeatmapTile>? _cachedHeatmapTilesRef;
   Set<Circle>? _cachedHeatmapCircles;
@@ -255,11 +256,12 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
   void _startLiveLocationStream() {
     _liveLocationSubscription?.cancel();
 
+    // Match safety-monitor cadence — bestForNavigation @ 2s was thrashing GoogleMap.
     final LocationSettings locationSettings = Platform.isAndroid
         ? AndroidSettings(
-            accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 5,
-            intervalDuration: const Duration(seconds: 2),
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 15,
+            intervalDuration: const Duration(seconds: 8),
             foregroundNotificationConfig: ForegroundNotificationConfig(
               notificationTitle: l10nSync(
                 'surakshaLiveLocationNotificationTitle',
@@ -267,12 +269,12 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
               notificationText: l10nSync(
                 'surakshaLiveLocationNotificationText',
               ),
-              enableWakeLock: true,
+              enableWakeLock: false,
             ),
           )
         : const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 5,
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 15,
           );
 
     _liveLocationSubscription =
@@ -293,20 +295,24 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
                 ? null
                 : (pos.accuracy - previous.accuracy).abs();
             final positionChangedMeaningfully = previous == null ||
-                (distanceMoved != null && distanceMoved >= 4) ||
-                (accuracyDelta != null && accuracyDelta > 15);
+                (distanceMoved != null && distanceMoved >= 12) ||
+                (accuracyDelta != null && accuracyDelta > 20);
 
             final newStatusText = _journeyActive
                 ? AppLocalizations.of(context).t('journeyTrackingActive')
                 : AppLocalizations.of(context).t('liveTrackingActive');
             final statusWouldChange = _statusText != newStatusText;
 
-            // Only rebuild when the position moved meaningfully, the status
-            // text would change, or a journey is actively being tracked
-            // (journey progress/ETA must keep updating live).
+            // During journey, throttle UI rebuilds to ~2s instead of every GPS tick.
+            final journeyUiDue = _journeyActive &&
+                (_lastJourneyUiAt == null ||
+                    DateTime.now().difference(_lastJourneyUiAt!) >=
+                        const Duration(seconds: 2));
+
             if (positionChangedMeaningfully ||
                 statusWouldChange ||
-                _journeyActive) {
+                journeyUiDue) {
+              if (_journeyActive) _lastJourneyUiAt = DateTime.now();
               setState(() {
                 _position = pos;
                 _setOrUpdateSelfMarker(pos);
@@ -317,7 +323,9 @@ class _SafetyMapScreenState extends ConsumerState<SafetyMapScreen> {
               _position = pos;
             }
 
-            if (_followMe && _mapController != null) {
+            if (_followMe &&
+                _mapController != null &&
+                positionChangedMeaningfully) {
               _mapController!.animateCamera(
                 CameraUpdate.newLatLng(LatLng(pos.latitude, pos.longitude)),
               );

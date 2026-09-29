@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show VoidCallback, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -133,12 +133,14 @@ class SOSNotifier extends StateNotifier<SOSState> {
   final _smsService = SOSSmsService();
   final _actions = SosActionsService();
   static const _secure = FlutterSecureStorage();
+  VoidCallback? _onTokensRefreshed;
 
   SOSNotifier(this._ref, this._userId) : super(SOSState()) {
     if (_userId != null && _userId.isNotEmpty) {
-      AuthInterceptor.onTokensRefreshed = () {
+      _onTokensRefreshed = () {
         unawaited(refreshSocketAuth());
       };
+      AuthInterceptor.onTokensRefreshed = _onTokensRefreshed;
       unawaited(_initialize());
     }
   }
@@ -757,6 +759,9 @@ class SOSNotifier extends StateNotifier<SOSState> {
 
   @override
   void dispose() {
+    if (identical(AuthInterceptor.onTokensRefreshed, _onTokensRefreshed)) {
+      AuthInterceptor.onTokensRefreshed = null;
+    }
     _positionSubscription?.cancel();
     _socket?.dispose();
     super.dispose();

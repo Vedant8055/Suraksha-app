@@ -549,8 +549,8 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
       Position? pos;
       try {
         pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation,
-          timeLimit: const Duration(seconds: 10),
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 6),
         );
       } catch (_) {
         pos = await Geolocator.getLastKnownPosition();
@@ -657,7 +657,9 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
     Position position, {
     bool force = false,
   }) async {
-    state = state.copyWith(isRefreshing: true);
+    if (!state.isRefreshing) {
+      state = state.copyWith(isRefreshing: true);
+    }
     final emergencyScanFuture = _scanEmergencyServices1km(position);
     try {
       await NetworkManager.instance.ensureReachable();
@@ -719,10 +721,16 @@ class SafetyMonitorNotifier extends StateNotifier<SafetyMonitorState> {
           )
           .timeout(const Duration(seconds: 18));
     } catch (_) {
-      // Still mark scanned so the card always shows the 1 km services section.
+      // Do not mark scanned with fake zeros — that made the AI card look like
+      // "no services within 1 km" when the request actually failed (e.g. 401).
+      // Keep any prior successful scan; otherwise leave unscanned for retry.
+      if (state.emergencyServices1km.scanned &&
+          state.emergencyServices1km.totalCount > 0) {
+        return state.emergencyServices1km;
+      }
       return NearbyEmergencyServicesSnapshot(
         radiusMeters: EmergencyServicesScanService.defaultRadiusMeters,
-        scanned: true,
+        scanned: false,
         policeCount: state.nearbyPoliceCount,
         hospitalCount: state.nearbyHospitalCount,
       );

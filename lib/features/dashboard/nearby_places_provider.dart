@@ -149,16 +149,8 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
   Future<void> fetchNearby(NearbyPlaceType type, {bool force = false}) async {
     final monitor = _ref.read(safetyMonitorProvider);
 
-    if (!monitor.gpsEnabled || !monitor.permissionGranted) {
-      state = state.copyWith(
-        isLoading: false,
-        activeType: type,
-        places: const [],
-        error: _l10n('nearbyGpsUnavailable'),
-      );
-      return;
-    }
-
+    // Prefer the live monitor fix when ready; otherwise resolve GPS directly so
+    // tapping Nearby still works before the 1s delayed monitor start finishes.
     final position = await _resolveCurrentScanPosition(monitor.position);
     if (position == null) {
       state = state.copyWith(
@@ -206,6 +198,8 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
         options: Options(
           sendTimeout: const Duration(seconds: 15),
           receiveTimeout: const Duration(seconds: 15),
+          // Public nearby routes — do not attach / refresh JWT.
+          extra: const {'skipAuth': true, 'skipAuthRefresh': true},
         ),
       );
 
@@ -253,6 +247,7 @@ class NearbyPlacesNotifier extends StateNotifier<NearbyPlacesState> {
   Future<Position?> _resolveCurrentScanPosition(Position? fallback) {
     return LocationPermissionService.resolvePosition(
       preferred: fallback,
+      mayRequest: true,
       accuracy: LocationAccuracy.best,
       timeLimit: const Duration(seconds: 8),
     );

@@ -17,8 +17,8 @@ ImageProvider<Object>? profilePhotoImageProvider(String? raw) {
 
   if (value.contains(':\\') || value.startsWith('/')) {
     try {
-      final file = File(value);
-      if (file.existsSync()) return FileImage(file);
+      // Avoid sync disk I/O on every build — trust local paths from our picker.
+      return FileImage(File(value));
     } catch (_) {
       return null;
     }

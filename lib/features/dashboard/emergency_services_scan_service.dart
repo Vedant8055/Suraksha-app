@@ -89,6 +89,8 @@ class EmergencyServicesScanService {
         options: Options(
           sendTimeout: const Duration(seconds: 12),
           receiveTimeout: const Duration(seconds: 12),
+          // Public nearby routes — do not attach / refresh JWT.
+          extra: const {'skipAuth': true, 'skipAuthRefresh': true},
         ),
       );
       final data = response.data;

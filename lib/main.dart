@@ -41,7 +41,8 @@ import 'package:suraksha_women_safety_app/widgets/premium_dialog.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   FlutterForegroundTask.initCommunicationPort();
-  await BackendUrlResolver.clearOverride();
+  // Never block first frame on SharedPreferences / disk I/O.
+  unawaited(BackendUrlResolver.clearOverride());
   ApiConfig.assertSafeConfiguration();
   if (TlsPinning.isLeafNearingExpiry()) {
     developer.log(
@@ -54,6 +55,7 @@ Future<void> main() async {
   unawaited(NetworkManager.instance.warmUpInBackground());
   unawaited(_warmUpFirebaseAndPush());
   unawaited(LocalAlertService.instance.ensureReady());
+  // Activity log I/O is expensive; keep startup logging off the critical path.
   unawaited(AppActivityLog.instance.record('app_started'));
   unawaited(AppActivityLog.instance.store.purgeExpired());
   runApp(const ProviderScope(child: MyApp()));
@@ -323,6 +325,8 @@ class _MyAppState extends ConsumerState<MyApp> {
 //Demo
   void _startBackgroundServicesIfNeeded() {
     if (!widget.startBackgroundServices) return;
+    // Still start GPS + nearby emergency scan in client demo so Nearby Services
+    // and the 1 km AI card list work (nearby APIs no longer require a JWT).
     Future<void>.delayed(const Duration(seconds: 1), () {
       if (!mounted) return;
       final auth = ref.read(authProvider);
@@ -330,6 +334,8 @@ class _MyAppState extends ConsumerState<MyApp> {
       unawaited(
         ref.read(safetyMonitorProvider.notifier).start().catchError((_) {}),
       );
+      // Route guard needs a real account for meaningful prefs — skip in demo.
+      if (FeatureFlags.clientDemoSkipAuth) return;
       unawaited(
         ref.read(routeSafetyProvider.notifier).start().catchError((_) {}),
       );

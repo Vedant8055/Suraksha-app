@@ -122,11 +122,12 @@ class AuthState {
     this.error,
   });
 
-  bool get isAuthenticated =>
-      !isInitializing &&
-      token != null &&
-      token!.isNotEmpty &&
-      user != null;
+  bool get isAuthenticated {
+    if (isInitializing || user == null) return false;
+    // Client demo session has a placeholder user without a real JWT.
+    if (FeatureFlags.clientDemoSkipAuth) return true;
+    return token != null && token!.isNotEmpty;
+  }
 
   AuthState copyWith({
     bool? isInitializing,
@@ -272,10 +273,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   void _enterClientDemoSession() {
+    // No fake JWT — a bogus Bearer makes nearby/other APIs return 401.
+    // Nearby routes are public; clear any leftover secure-storage tokens so
+    // AuthInterceptor does not attach a stale Authorization header.
+    unawaited(AuthTokenStorage.clear());
     state = AuthState(
       isInitializing: false,
       isLoading: false,
-      token: 'demo-client-token',
+      token: null,
       user: UserModel(
         id: 'demo-client',
         name: 'Demo User',
